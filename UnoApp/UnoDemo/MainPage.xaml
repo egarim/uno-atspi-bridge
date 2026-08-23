@@ -1,0 +1,38 @@
+<Page x:Class="UnoDemo.MainPage"
+      xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+      xmlns:local="using:UnoDemo"
+      Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+  <ScrollViewer>
+    <StackPanel Margin="20" Spacing="12" HorizontalAlignment="Left">
+      <TextBlock Text="AT-SPI accessibility demo (Uno)" FontWeight="Bold"/>
+
+      <Button x:Name="OpenFileManagerButton"
+              AutomationProperties.Name="Open File Manager"
+              Content="Open File Manager"/>
+
+      <Button x:Name="SaveDocumentButton"
+              AutomationProperties.Name="Save Document"
+              Content="Save Document"/>
+
+      <TextBox x:Name="SearchBox"
+               AutomationProperties.Name="Search box"
+               PlaceholderText="Type to search..."/>
+
+      <CheckBox x:Name="NotificationsCheckBox"
+                AutomationProperties.Name="Enable notifications"
+                Content="Enable notifications"/>
+
+      <Slider x:Name="VolumeSlider"
+              AutomationProperties.Name="Volume"
+              Minimum="0" Maximum="100" Value="50" Width="200"/>
+
+      <ComboBox x:Name="ThemeCombo"
+                AutomationProperties.Name="Theme selector"
+                SelectedIndex="0">
+        <ComboBoxItem>Light</ComboBoxItem>
+        <ComboBoxItem>Dark</ComboBoxItem>
+      </ComboBox>
+    </StackPanel>
+  </ScrollViewer>
+</Page>
