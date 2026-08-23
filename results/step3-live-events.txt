@@ -1,0 +1,8 @@
+>> listening for live AT-SPI events (the bridge drives a focus + a toggle):
+# listening for object:state-changed for 10s ...
+[EVENT] object:state-changed:focused  value=0  source=[push button] 'Open File Manager'
+[EVENT] object:state-changed:focused  value=0  source=[panel] ''
+[EVENT] object:state-changed:focused  value=1  source=[entry] 'Search box'
+[EVENT] object:state-changed:focused  value=1  source=[panel] ''
+[EVENT] object:state-changed:checked  value=1  source=[check box] 'Enable notifications'
+# done. 5 event(s) received.

@@ -1,95 +1,134 @@
-# uno-atspi-bridge (PoC)
+# uno-atspi-bridge
 
-**Can we give Uno Platform an AT-SPI accessibility backend on Linux ourselves?**
+**A proof-of-concept AT-SPI accessibility backend for Uno Platform on Linux —
+written in application code, verified headless in a container.**
 
-Uno's Skia desktop head [does not expose an AT-SPI tree on Linux](https://github.com/egarim/atspi-dotnet-demo)
-— a screen reader (or an [AT-SPI-first agent](https://jocheojeda.com/2026/08/22/at-spi-first-grounding/))
-sees nothing. This repo is a focused proof-of-concept: build the missing bridge
-that projects Uno's controls onto AT-SPI, and verify it in a headless container.
+Uno's Skia desktop head renders to X11 but publishes **no** AT-SPI tree, so on
+Linux a Uno app is invisible to screen readers (Orca) and to
+[AT-SPI-first agents](https://jocheojeda.com/2026/08/22/at-spi-first-grounding/).
+This repo builds the missing backend: it walks Uno's `AutomationPeer` tree and
+serves it over the accessibility D-Bus, including **live focus / state events**.
 
-## Step 1 — is the semantic tree even there? ✅ YES
+Full write-up: [I Gave Uno Platform a Linux Accessibility Backend in an Afternoon](https://jocheojeda.com/2026/08/23/uno-linux-accessibility-backend/).
 
-Before writing a D-Bus bridge, the question is whether Uno instantiates
-`AutomationPeer`s at runtime on the Linux Skia head. If it does, the bridge just
-has to *publish* them; if it doesn't, there's nothing to publish.
+![The Uno demo app running headless in the container](results/app-screenshot.png)
 
-It does. Dumped from **inside the app** running under Xvfb in a Linux container
-(full output in [`results/step1-uno-peer-tree.txt`](results/step1-uno-peer-tree.txt)):
+*The demo app whose controls the bridge exposes.*
 
-```
-[Button]   name='Open File Manager'    box=(20,52,148,33)   focusable=True
-[Button]   name='Save Document'        box=(20,97,127,33)   focusable=True
-[Edit]     name='Search box'           box=(20,142,217,33)  focusable=True
-[CheckBox] name='Enable notifications' box=(20,187,157,32)  focusable=True
-[Slider]   name='Volume'               box=(28,231,200,32)  focusable=True
-[ComboBox] name='Theme selector'       box=(20,275,83,32)   focusable=True
-```
+## What works
 
-A full visual-tree walk finds **30 peers** with roles, names, and bounding boxes.
-Everything AT-SPI needs is present at runtime. The only missing piece is the
-Linux AT-SPI **D-Bus backend** that projects this tree.
-
-## Step 2 — the AT-SPI bridge ✅ WORKS
-
-[`UnoApp/UnoDemo/Atspi/AtspiBridge.cs`](UnoApp/UnoDemo/Atspi/AtspiBridge.cs) — a
-~350-line AT-SPI2 backend that, on Linux startup:
-1. connects to the a11y bus (`org.a11y.Bus.GetAddress`),
-2. performs the `Socket.Embed` handshake to attach the app root to the desktop,
-3. exports each Uno peer as a D-Bus object implementing `org.a11y.atspi.Accessible`
-   (role, name, states, children) + `Component` (extents), mapping
-   `AutomationControlType`→AtspiRole, `GetName()`→name, `GetBoundingRectangle()`→box,
-   `IsKeyboardFocusable`/`IsEnabled`→states.
-
-Built on `Tmds.DBus.Protocol` (the same D-Bus stack Avalonia uses).
-
-**Result** — the same `harness/atspi_dump.py` client (like Orca) that saw *nothing*
-before now reads the full tree (full output in
-[`results/step2-uno-atspi-via-bridge.txt`](results/step2-uno-atspi-via-bridge.txt)):
-
-```
-# AT-SPI desktop has 1 application(s) registered
-=== application: 'UnoDemo' ===
-    [push button] 'Open File Manager'    box=(20,52,148,33)   focusable,enabled,showing,sensitive,visible
-    [push button] 'Save Document'        box=(20,97,127,33)   ...
-    [entry]       'Search box'           box=(20,142,217,33)
-    [check box]   'Enable notifications' box=(20,187,157,32)
-    [slider]      'Volume'               box=(28,231,200,32)
-    [combo box]   'Theme selector'       box=(20,275,83,32)
-```
-
-Correct roles, names, exact boxes, live states — everything an AT-SPI-first agent
-or a screen reader needs. **We gave Uno the Linux accessibility backend it was
-missing, in application code, no fork required.**
-
-## Scope / honesty
-
-This is a PoC, not production. It implements the read path (Accessible +
-Component + Application + `Socket.Embed`) — enough for grounding and tree
-inspection. Not yet done: live event signals (focus/state/children-changed for a
-screen reader tracking changes), the `Text`/`Value`/`Action` interfaces, filtering
-of non-actionable internals (scrollbar repeat-buttons show up), and screen-space
-coordinate offset (boxes are window-relative here). The right home for a complete
-version is [Uno's own Skia a11y abstraction](https://platform.uno/docs/articles/features/working-with-accessibility.html)
-(6.6 already routes peers to Win/mac/wasm backends — this shows the Linux one is
-tractable).
-
-## Mapping (peer → AT-SPI)
-
-| Uno peer | AT-SPI role |
+| capability | status |
 |---|---|
-| Button | push button |
-| Edit (TextBox) | entry |
-| CheckBox | check box |
-| Slider | slider |
-| ComboBox | combo box |
-| Text (TextBlock) | label |
+| App registers on the AT-SPI desktop (`Socket.Embed`) | ✅ |
+| Per-control `Accessible` (role, name, states, children) | ✅ |
+| `Component` (bounding box, position, size) | ✅ |
+| **Live events** — `state-changed:focused`, `state-changed:checked` | ✅ |
+| Screen-space coordinates (window origin applied) | ✅ (see note) |
+
+## Quick start (Docker — no Linux desktop needed)
+
+Prereqs: Docker. Everything else (the .NET SDK, Xvfb, D-Bus, `at-spi2-core`,
+the Python `Atspi` client) is inside the image.
+
+```bash
+git clone https://github.com/egarim/uno-atspi-bridge
+cd uno-atspi-bridge
+
+# build the image (Uno app + headless AT-SPI harness)
+docker build -f harness/Dockerfile \
+  --build-arg APP_DIR=UnoApp \
+  --build-arg APP_PROJ=app/UnoDemo/UnoDemo.csproj \
+  --build-arg APP_TFM=net10.0-desktop \
+  -t uno-atspi-poc .
+```
+
+**1. Dump the AT-SPI tree** (what a screen reader / agent reads):
+
+```bash
+docker run --rm -v "$PWD/harness:/harness" uno-atspi-poc /app/UnoDemo.dll ""
+```
+Expected: `1 application registered: 'UnoDemo'` followed by `[push button] 'Open
+File Manager' box=(...)`, `[entry] 'Search box'`, `[check box] ...`, etc.
+
+**2. Live events + screenshot** — the app drives a focus change and a checkbox
+toggle; a listener (like Orca) catches the events:
+
+```bash
+mkdir -p results
+docker run --rm -v "$PWD/results:/out" -v "$PWD/harness:/harness" \
+  --entrypoint bash uno-atspi-poc /harness/run_events.sh /app/UnoDemo.dll
+```
+Expected — a screenshot at `results/app-screenshot.png` and:
+```
+[EVENT] object:state-changed:focused  value=1  source=[entry] 'Search box'
+[EVENT] object:state-changed:checked  value=1  source=[check box] 'Enable notifications'
+```
+
+## Captured results
+
+- [`results/step2-uno-atspi-via-bridge.txt`](results/step2-uno-atspi-via-bridge.txt) — the full tree
+- [`results/step3-live-events.txt`](results/step3-live-events.txt) — the live events
+- [`results/app-screenshot.png`](results/app-screenshot.png) — the rendered app
+
+## How it works
+
+[`UnoApp/UnoDemo/Atspi/AtspiBridge.cs`](UnoApp/UnoDemo/Atspi/AtspiBridge.cs), on
+`Tmds.DBus.Protocol` (the same D-Bus stack Avalonia uses):
+
+1. **Discover + connect** — ask the session bus for the a11y bus
+   (`org.a11y.Bus.GetAddress`) and connect to it.
+2. **Walk the peers** — `FrameworkElementAutomationPeer.CreatePeerForElement`
+   over the visual tree → a flat list of nodes with role, name, box, states.
+3. **Screen coordinates** — read the window origin from `AppWindow.Position` and
+   add it to any window-relative rects.
+4. **Embed** — `org.a11y.atspi.Socket.Embed` attaches the app root to the desktop.
+5. **Serve** — a D-Bus object per node implementing `org.a11y.atspi.Accessible`
+   + `Component` (+ `Application` on the root).
+6. **Emit events** — hook `GotFocus`/`LostFocus` and `ToggleButton.Checked/Unchecked`,
+   emit `org.a11y.atspi.Event.Object.StateChanged` signals (`siiv(so)`).
+
+Role mapping (`AutomationControlType` → real `AtspiRole` id/name): Button→push
+button, Edit→entry, CheckBox→check box, Slider→slider, ComboBox→combo box,
+Text→label. **Note:** `libatspi` derives the role name from the numeric role id,
+not from `GetRoleName` — the ids must be the real enum values.
+
+## Run on a real Linux desktop (no container)
+
+On a Linux box with a D-Bus session + AT-SPI running (GNOME/most desktops):
+
+```bash
+cd UnoApp/UnoDemo
+dotnet run -f net10.0-desktop
+# then, in another terminal, inspect with accerciser, or run Orca
+```
+The bridge auto-starts (`AtspiBridge.TryStart` in `MainPage`) when an a11y bus is
+present. On a real desktop the window origin is non-zero, so the screen
+coordinates are true screen space.
+
+## Scope / honesty (it's a PoC)
+
+Done: the read path + focus/checked events. **Not** done: the `Text`/`Value`/
+`Action` interfaces (reading a caret, invoking through AT-SPI), `children-changed`
+events, filtering of non-actionable internals (scrollbar repeat-buttons appear),
+and richer state coverage. In the headless container the window sits at `(0,0)`,
+so screen and window coordinates coincide — the origin logic is exercised on a
+real desktop.
+
+The right long-term home is **[Uno's own accessibility abstraction](https://platform.uno/docs/articles/features/working-with-accessibility.html)**
+— 6.6 already routes peers to Windows / macOS / WebAssembly backends, so this is
+really a demonstration that the Linux AT-SPI backend slotting into that
+abstraction is a bounded, contributable piece of work.
 
 ## Layout
 
 ```
-UnoApp/     the Uno desktop app (named controls) + the peer dumper (Step 1)
-harness/    Dockerfile + run.sh + atspi_dump.py (headless AT-SPI test)
-results/    captured output
+UnoApp/                     the Uno desktop app + Atspi/AtspiBridge.cs
+harness/Dockerfile          .NET SDK + Xvfb + dbus + at-spi2 + Python Atspi + scrot
+harness/run.sh              start registry + app, dump the tree
+harness/run_events.sh       + drive focus/toggle, capture events + screenshot
+harness/atspi_dump.py       AT-SPI client: walk + print the tree (like Orca)
+harness/atspi_listen.py     AT-SPI client: print live state-changed events
+results/                    captured tree, events, screenshot
 ```
 
 ## License
