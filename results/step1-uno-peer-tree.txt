@@ -1,0 +1,39 @@
+=== UNO PEERS (A) via peer hierarchy from named controls ===
+  [Button] name='Open File Manager' box=(20,52,148,33) focusable=True
+  [Button] name='Save Document' box=(20,97,127,33) focusable=True
+  [Edit] name='Search box' box=(20,142,217,33) focusable=True
+  [CheckBox] name='Enable notifications' box=(20,187,157,32) focusable=True
+  [Slider] name='Volume' box=(28,231,200,32) focusable=True
+  [ComboBox] name='Theme selector' box=(20,275,83,32) focusable=True
+=== UNO PEERS (B) full walk of the visual tree ===
+  [Pane] name='' class=ScrollViewer box=(0,0,1024,640)
+            [Text] name='AT-SPI accessibility demo (Uno)' class=TextBlock box=(20,20,217,20)
+            [Button] name='Open File Manager' class=Button box=(20,52,148,33)
+                  [Text] name='Open File Manager' class=ImplicitTextBlock box=(32,58,124,20)
+            [Button] name='Save Document' class=Button box=(20,97,127,33)
+                  [Text] name='Save Document' class=ImplicitTextBlock box=(32,103,103,20)
+            [Edit] name='Search box' class=TextBox box=(20,142,217,33)
+                [Pane] name='' class=ScrollViewer box=(21,143,215,31)
+                        [Text] name='' class=TextBlock box=(31,148,199,20)
+                [Text] name='Type to search...' class=TextBlock box=(21,143,215,31)
+            [CheckBox] name='Enable notifications' class=CheckBox box=(20,187,157,32)
+                          [Text] name='' class=TextBlock box=(24,197,12,12)
+                  [Text] name='Enable notifications' class=ImplicitTextBlock box=(48,192,129,20)
+            [Slider] name='Volume' class=Slider box=(28,231,200,32)
+                    [Thumb] name='' class=Thumb box=(119,238,18,18)
+                    [Thumb] name='' class=Thumb box=(0,0,0,0)
+            [ComboBox] name='Theme selector' class=ComboBox box=(20,275,83,32)
+                  [Text] name='Light' class=ImplicitTextBlock box=(32,280,33,20)
+                        [Text] name='' class=TextBlock box=(77,285,12,12)
+        [ScrollBar] name='Vertical' class=ScrollBar box=(1008,0,16,640)
+              [Button] name='' class=RepeatButton box=(0,0,0,0)
+              [Button] name='' class=RepeatButton box=(0,0,0,0)
+              [Button] name='' class=RepeatButton box=(0,0,0,0)
+              [Button] name='' class=RepeatButton box=(0,0,0,0)
+              [Button] name='' class=RepeatButton box=(0,0,0,0)
+                      [Text] name='' class=TextBlock box=(0,0,0,0)
+              [Button] name='' class=RepeatButton box=(0,0,0,0)
+              [Button] name='' class=RepeatButton box=(0,0,0,0)
+              [Button] name='' class=RepeatButton box=(0,0,0,0)
+                      [Text] name='' class=TextBlock box=(0,0,0,0)
+=== peers found on visual walk: 30 ===
