@@ -35,6 +35,9 @@ public sealed partial class MainPage : Page
         int count = WalkVisual(this, 0, sb);
         sb.AppendLine($"=== peers found on visual walk: {count} ===");
         Console.WriteLine(sb.ToString());
+
+        // Start our AT-SPI bridge: project these peers onto the a11y D-Bus.
+        UnoDemo.Atspi.AtspiBridge.TryStart(this);
     }
 
     // walk the visual tree; for each FrameworkElement, create its peer and print it
