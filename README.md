@@ -29,17 +29,49 @@ A full visual-tree walk finds **30 peers** with roles, names, and bounding boxes
 Everything AT-SPI needs is present at runtime. The only missing piece is the
 Linux AT-SPI **D-Bus backend** that projects this tree.
 
-## Step 2 — the AT-SPI bridge (in progress)
+## Step 2 — the AT-SPI bridge ✅ WORKS
 
-A library that, on Linux desktop startup:
+[`UnoApp/UnoDemo/Atspi/AtspiBridge.cs`](UnoApp/UnoDemo/Atspi/AtspiBridge.cs) — a
+~350-line AT-SPI2 backend that, on Linux startup:
 1. connects to the a11y bus (`org.a11y.Bus.GetAddress`),
-2. performs the AT-SPI `Socket.Embed` handshake to attach the app root to the desktop,
-3. exports each peer as a D-Bus object implementing `org.a11y.atspi.Accessible`
+2. performs the `Socket.Embed` handshake to attach the app root to the desktop,
+3. exports each Uno peer as a D-Bus object implementing `org.a11y.atspi.Accessible`
    (role, name, states, children) + `Component` (extents), mapping
-   `AutomationControlType`→role, `GetName()`→name, `GetBoundingRectangle()`→box,
+   `AutomationControlType`→AtspiRole, `GetName()`→name, `GetBoundingRectangle()`→box,
    `IsKeyboardFocusable`/`IsEnabled`→states.
 
-Verified with the same `harness/atspi_dump.py` client (like Orca).
+Built on `Tmds.DBus.Protocol`.
+
+**Result** — the same `harness/atspi_dump.py` client (like Orca) that saw *nothing*
+before now reads the full tree (full output in
+[`results/step2-uno-atspi-via-bridge.txt`](results/step2-uno-atspi-via-bridge.txt)):
+
+```
+# AT-SPI desktop has 1 application(s) registered
+=== application: 'UnoDemo' ===
+    [push button] 'Open File Manager'    box=(20,52,148,33)   focusable,enabled,showing,sensitive,visible
+    [push button] 'Save Document'        box=(20,97,127,33)   ...
+    [entry]       'Search box'           box=(20,142,217,33)
+    [check box]   'Enable notifications' box=(20,187,157,32)
+    [slider]      'Volume'               box=(28,231,200,32)
+    [combo box]   'Theme selector'       box=(20,275,83,32)
+```
+
+Correct roles, names, exact boxes, live states — everything an AT-SPI-first agent
+or a screen reader needs. **We gave Uno the Linux accessibility backend it was
+missing, in application code, no fork required.**
+
+## Scope / honesty
+
+This is a PoC, not production. It implements the read path (Accessible +
+Component + Application + `Socket.Embed`) — enough for grounding and tree
+inspection. Not yet done: live event signals (focus/state/children-changed for a
+screen reader tracking changes), the `Text`/`Value`/`Action` interfaces, filtering
+of non-actionable internals (scrollbar repeat-buttons show up), and screen-space
+coordinate offset (boxes are window-relative here). The right home for a complete
+version is [Uno's own Skia a11y abstraction](https://platform.uno/docs/articles/features/working-with-accessibility.html)
+(6.6 already routes peers to Win/mac/wasm backends — this shows the Linux one is
+tractable).
 
 ## Mapping (peer → AT-SPI)
 

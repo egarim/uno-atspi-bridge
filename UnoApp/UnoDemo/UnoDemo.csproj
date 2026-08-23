@@ -26,4 +26,8 @@
     </UnoFeatures>
   </PropertyGroup>
 
+  <ItemGroup>
+    <PackageReference Include="Tmds.DBus.Protocol" />
+  </ItemGroup>
+
 </Project>

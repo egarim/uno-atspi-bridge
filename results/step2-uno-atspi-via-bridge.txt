@@ -1,0 +1,35 @@
+# AT-SPI desktop has 1 application(s) registered
+
+=== application: 'UnoDemo' ===
+[application] 'UnoDemo' box=(0,0,0,0) states=showing,visible
+  [panel] '' box=(0,0,1024,640) states=enabled,showing,sensitive,visible
+    [label] 'AT-SPI accessibility demo (Uno)' box=(20,20,217,20) states=enabled,showing,sensitive,visible
+    [push button] 'Open File Manager' box=(20,52,148,33) states=focusable,enabled,showing,sensitive,visible
+      [label] 'Open File Manager' box=(32,58,124,20) states=enabled,showing,sensitive,visible
+    [push button] 'Save Document' box=(20,97,127,33) states=focusable,enabled,showing,sensitive,visible
+      [label] 'Save Document' box=(32,103,103,20) states=enabled,showing,sensitive,visible
+    [entry] 'Search box' box=(20,142,217,33) states=focusable,enabled,showing,sensitive,visible
+      [panel] '' box=(21,143,215,31) states=enabled,showing,sensitive,visible
+        [label] '' box=(31,148,199,20) states=enabled,showing,sensitive,visible
+      [label] 'Type to search...' box=(21,143,215,31) states=enabled,showing,sensitive,visible
+    [check box] 'Enable notifications' box=(20,187,157,32) states=focusable,enabled,showing,sensitive,visible
+      [label] '\ue001' box=(24,197,12,12) states=enabled,showing,sensitive,visible
+      [label] 'Enable notifications' box=(48,192,129,20) states=enabled,showing,sensitive,visible
+    [slider] 'Volume' box=(28,231,200,32) states=focusable,enabled,showing,sensitive,visible
+      [panel] '' box=(119,238,18,18) states=enabled,showing,sensitive,visible
+      [panel] '' box=(0,0,0,0) states=enabled,showing,sensitive,visible
+    [combo box] 'Theme selector' box=(20,275,83,32) states=focusable,enabled,showing,sensitive,visible
+      [label] 'Light' box=(32,280,33,20) states=enabled,showing,sensitive,visible
+      [label] '\ue70d' box=(77,285,12,12) states=enabled,showing,sensitive,visible
+    [panel] 'Vertical' box=(1008,0,16,640) states=enabled,showing,sensitive,visible
+      [push button] '' box=(0,0,0,0) states=enabled,showing,sensitive,visible
+      [push button] '' box=(0,0,0,0) states=enabled,showing,sensitive,visible
+      [push button] '' box=(0,0,0,0) states=enabled,showing,sensitive,visible
+      [push button] '' box=(0,0,0,0) states=enabled,showing,sensitive,visible
+      [push button] '' box=(0,0,0,0) states=enabled,showing,sensitive,visible
+        [label] '\ueddb' box=(0,0,0,0) states=enabled,showing,sensitive,visible
+      [push button] '' box=(0,0,0,0) states=enabled,showing,sensitive,visible
+      [push button] '' box=(0,0,0,0) states=enabled,showing,sensitive,visible
+      [push button] '' box=(0,0,0,0) states=enabled,showing,sensitive,visible
+        [label] '\ueddc' box=(0,0,0,0) states=enabled,showing,sensitive,visible
+
