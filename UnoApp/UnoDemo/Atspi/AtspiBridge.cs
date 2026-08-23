@@ -19,10 +19,11 @@ internal sealed class Node
     public string Name = "";
     public uint Role;
     public string RoleName = "";
-    public (int x, int y, int w, int h) Box;
+    public (int x, int y, int w, int h) Box;                 // screen coordinates
     public bool Enabled, Focusable;
     public Node? Parent;
     public readonly List<Node> Children = new();
+    public Microsoft.UI.Xaml.FrameworkElement? Element;      // source, for live events
 }
 
 internal static class RoleMap
@@ -57,6 +58,7 @@ public sealed class AtspiBridge
     readonly Dictionary<string, Node> _byPath = new();
     readonly Node _root = new() { Path = RootPath, Name = "UnoDemo", Role = 75, RoleName = "application" };
     int _next = 1;
+    (int x, int y) _origin;   // window position on screen (added to window-relative rects)
 
     public static async void TryStart(Microsoft.UI.Xaml.FrameworkElement uiRoot)
     {
@@ -66,8 +68,17 @@ public sealed class AtspiBridge
 
     async Task StartAsync(Microsoft.UI.Xaml.FrameworkElement uiRoot)
     {
+        // window position on screen (for screen-space coordinates)
+        try
+        {
+            var p = App.Win?.AppWindow?.Position;
+            if (p is { } pos) _origin = (pos.X, pos.Y);
+        }
+        catch { }
+
         WalkVisual(uiRoot, _root);
-        Console.WriteLine($"[atspi] built {_byPath.Count} control nodes (+root)");
+        ApplyScreenCoordinates();
+        Console.WriteLine($"[atspi] built {_byPath.Count} control nodes (+root); window origin {_origin}");
 
         var address = await GetA11yBusAddressAsync();
         if (string.IsNullOrEmpty(address)) { Console.WriteLine("[atspi] no a11y bus"); return; }
@@ -82,7 +93,23 @@ public sealed class AtspiBridge
         foreach (var n in _byPath.Values) _conn.AddMethodHandler(new NodeHandler(this, n));
 
         await EmbedAsync();
-        Console.WriteLine("[atspi] embedded; tree is live");
+        HookLiveEvents();
+        Console.WriteLine("[atspi] embedded; tree is live, events wired");
+
+        _ = EventDemoAsync();   // drive a focus + toggle so events are observable
+    }
+
+    // WinUI's GetBoundingRectangle is spec'd as screen-relative. If a head returns
+    // window-relative rects instead (outermost node sits at ~0 while the window is
+    // offset), add the window origin so every box is true screen space.
+    void ApplyScreenCoordinates()
+    {
+        if (_origin == (0, 0)) return;                       // nothing to add
+        var top = _root.Children.Count > 0 ? _root.Children[0] : null;
+        bool windowRelative = top != null && top.Box.x < _origin.x - 4;
+        if (!windowRelative) return;
+        foreach (var n in _byPath.Values)
+            n.Box = (n.Box.x + _origin.x, n.Box.y + _origin.y, n.Box.w, n.Box.h);
     }
 
     async Task<string?> GetA11yBusAddressAsync()
@@ -126,6 +153,7 @@ public sealed class AtspiBridge
                     Enabled = Try(() => p.IsEnabled(), false),
                     Focusable = Try(() => p.IsKeyboardFocusable(), false),
                     Parent = parent,
+                    Element = fe,
                 };
                 parent.Children.Add(n);
                 _byPath[n.Path] = n;
@@ -138,6 +166,60 @@ public sealed class AtspiBridge
     }
 
     static T Try<T>(Func<T> f, T dflt) { try { return f(); } catch { return dflt; } }
+
+    // ---- live events: project Uno UI events onto AT-SPI state-changed signals ----
+    void HookLiveEvents()
+    {
+        foreach (var n in _byPath.Values)
+        {
+            if (n.Element is null) continue;
+            var node = n;
+            node.Element.GotFocus  += (_, _) => EmitStateChanged(node, "focused", 1);
+            node.Element.LostFocus += (_, _) => EmitStateChanged(node, "focused", 0);
+            if (node.Element is Microsoft.UI.Xaml.Controls.Primitives.ToggleButton tb)
+            {
+                tb.Checked   += (_, _) => EmitStateChanged(node, "checked", 1);
+                tb.Unchecked += (_, _) => EmitStateChanged(node, "checked", 0);
+            }
+        }
+    }
+
+    // org.a11y.atspi.Event.Object.StateChanged  body: siiv(so)
+    void EmitStateChanged(Node n, string detail, int value)
+    {
+        if (_conn is null) return;
+        try
+        {
+            var w = _conn.GetMessageWriter();
+            w.WriteSignalHeader(null, n.Path, "org.a11y.atspi.Event.Object", "StateChanged", "siiv(so)");
+            w.WriteString(detail);
+            w.WriteInt32(value);
+            w.WriteInt32(0);
+            w.WriteVariantInt32(0);
+            w.WriteStructureStart(); w.WriteString(_unique); w.WriteObjectPath(RootPath);
+            _conn.TrySendMessage(w.CreateMessage());
+            Console.WriteLine($"[atspi] emit state-changed:{detail}={value} on {n.Name}");
+        }
+        catch (Exception ex) { Console.WriteLine($"[atspi] emit failed: {ex.Message}"); }
+    }
+
+    // Drive a focus + a checkbox toggle so a listening client (Orca / atspi_listen)
+    // observes real, live events without a human touching anything.
+    async Task EventDemoAsync()
+    {
+        await Task.Delay(3000);
+        var entry = FindByRole("entry");
+        entry?.Element?.Focus(Microsoft.UI.Xaml.FocusState.Programmatic);
+        await Task.Delay(1500);
+        if (FindByRole("check box")?.Element is Microsoft.UI.Xaml.Controls.Primitives.ToggleButton cb)
+            cb.IsChecked = true;
+    }
+
+    Node? FindByRole(string roleName)
+    {
+        foreach (var n in _byPath.Values) if (n.RoleName == roleName) return n;
+        return null;
+    }
 
     sealed class NodeHandler : IPathMethodHandler
     {

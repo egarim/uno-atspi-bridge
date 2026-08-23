@@ -17,9 +17,13 @@ public partial class App : Application
 
     protected Window? MainWindow { get; private set; }
 
+    // exposed so the AT-SPI bridge can read the window's screen position
+    public static Window? Win { get; private set; }
+
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
         MainWindow = new Window();
+        Win = MainWindow;
 #if DEBUG
         MainWindow.UseStudio();
 #endif
