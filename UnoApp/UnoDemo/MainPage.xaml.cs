@@ -1,72 +1,118 @@
 using System;
+using System.Linq;
 using System.Text;
-using Microsoft.UI.Xaml.Automation.Peers;
-using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
+using Windows.System;
 
 namespace UnoDemo;
 
 public sealed partial class MainPage : Page
 {
+    int _n = 1;   // names for dropped controls
+
     public MainPage()
     {
         this.InitializeComponent();
         this.Loaded += OnLoaded;
     }
 
-    private async void OnLoaded(object sender, RoutedEventArgs e)
+    private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        await System.Threading.Tasks.Task.Delay(1500);
+        RefreshTree();
+        Say("agent", "Ready. Ask me “what can you see?”, then “enable notifications”.");
+
+        // The AT-SPI bridge is Linux-only (no session bus elsewhere). On Windows/macOS
+        // the same tree is exposed natively by Uno; the in-app agent below reads it directly.
+        if (OperatingSystem.IsLinux())
+            UnoDemo.Atspi.AtspiBridge.TryStart(SurfacePanel);
+    }
+
+    // ---- palette: drop controls, tree recomputes ----
+    private void AddButton(object s, RoutedEventArgs e)   => DropControl(new Button   { Content = $"Button {_n}" },              $"Button {_n}");
+    private void AddTextBox(object s, RoutedEventArgs e)  => DropControl(new TextBox  { PlaceholderText = "…" },                 $"Field {_n}");
+    private void AddCheckBox(object s, RoutedEventArgs e) => DropControl(new CheckBox { Content = $"Option {_n}" },              $"Option {_n}");
+    private void AddSlider(object s, RoutedEventArgs e)   => DropControl(new Slider   { Minimum = 0, Maximum = 100, Value = 50, Width = 220 }, $"Level {_n}");
+    private void AddCombo(object s, RoutedEventArgs e)
+    {
+        var c = new ComboBox { SelectedIndex = 0 };
+        c.Items.Add(new ComboBoxItem { Content = "One" });
+        c.Items.Add(new ComboBoxItem { Content = "Two" });
+        DropControl(c, $"Choice {_n}");
+    }
+
+    private void DropControl(FrameworkElement el, string name)
+    {
+        AutomationProperties.SetName(el, name);
+        SurfacePanel.Children.Add(el);
+        _n++;
+        RefreshTree();
+        Say("system", $"dropped ‹{name}› — tree recomputed");
+    }
+
+    // ---- the live accessibility tree ----
+    private void RefreshTree()
+    {
+        var tree = Agent.Interactive(Agent.ReadTree(SurfacePanel)).ToList();
         var sb = new StringBuilder();
-        sb.AppendLine("=== UNO PEERS (A) via peer hierarchy from named controls ===");
-        // Peers exist per-control if CreatePeerForElement returns non-null.
-        foreach (var el in new FrameworkElement[]
-                 { OpenFileManagerButton, SaveDocumentButton, SearchBox,
-                   NotificationsCheckBox, VolumeSlider, ThemeCombo })
+        sb.AppendLine($"[application] 'Accessibility Designer'   {tree.Count} controls");
+        foreach (var t in tree)
         {
-            var p = FrameworkElementAutomationPeer.CreatePeerForElement(el);
-            if (p is null) { sb.AppendLine($"  (no peer for {el.Name})"); continue; }
-            sb.AppendLine($"  [{Safe(() => p.GetAutomationControlType().ToString())}] " +
-                          $"name={Q(Safe(() => p.GetName()))} " +
-                          $"box={Box(Safe(() => p.GetBoundingRectangle()))} " +
-                          $"focusable={Safe(() => p.IsKeyboardFocusable())}");
+            var st = new StringBuilder();
+            if (t.Enabled) st.Append("enabled ");
+            if (t.Focusable) st.Append("focusable ");
+            if (t.Element is CheckBox { IsChecked: true }) st.Append("checked ");
+            sb.AppendLine($"  [{RoleTag(t.Role)}] '{t.Name}'  ({(int)t.Box.X},{(int)t.Box.Y},{(int)t.Box.Width},{(int)t.Box.Height})");
+            sb.AppendLine($"      {st}".TrimEnd());
         }
-
-        sb.AppendLine("=== UNO PEERS (B) full walk of the visual tree ===");
-        int count = WalkVisual(this, 0, sb);
-        sb.AppendLine($"=== peers found on visual walk: {count} ===");
-        Console.WriteLine(sb.ToString());
-
-        // Start our AT-SPI bridge: project these peers onto the a11y D-Bus.
-        // Only meaningful on the Skia (Linux) head — the native Windows head
-        // already exposes full UI Automation, no bridge needed.
-#if !WINDOWS
-        UnoDemo.Atspi.AtspiBridge.TryStart(this);
-#endif
+        TreeText.Text = sb.ToString().TrimEnd();
     }
 
-    // walk the visual tree; for each FrameworkElement, create its peer and print it
-    private static int WalkVisual(DependencyObject node, int depth, StringBuilder sb)
+    private static string RoleTag(string role) => role switch
     {
-        int found = 0;
-        if (node is FrameworkElement fe)
-        {
-            var p = FrameworkElementAutomationPeer.CreatePeerForElement(fe);
-            if (p != null)
-            {
-                found++;
-                sb.AppendLine($"{new string(' ', depth * 2)}[{Safe(() => p.GetAutomationControlType().ToString())}] " +
-                              $"name={Q(Safe(() => p.GetName()))} class={fe.GetType().Name} " +
-                              $"box={Box(Safe(() => p.GetBoundingRectangle()))}");
-            }
-        }
-        int n = VisualTreeHelper.GetChildrenCount(node);
-        for (int i = 0; i < n; i++)
-            found += WalkVisual(VisualTreeHelper.GetChild(node, i), depth + 1, sb);
-        return found;
+        "Button" => "push button", "Edit" => "entry", "CheckBox" => "check box",
+        "Slider" => "slider", "ComboBox" => "combo box", "RadioButton" => "radio button", _ => role.ToLowerInvariant(),
+    };
+
+    // ---- agent chat ----
+    private void ChatKeyDown(object s, KeyRoutedEventArgs e)
+    {
+        if (e.Key == VirtualKey.Enter) { e.Handled = true; OnSend(s, null!); }
     }
 
-    private static string Q(string s) => s is null ? "null" : $"'{s}'";
-    private static string Box(Windows.Foundation.Rect r) =>
-        $"({(int)r.X},{(int)r.Y},{(int)r.Width},{(int)r.Height})";
-    private static T Safe<T>(Func<T> f) { try { return f(); } catch { return default!; } }
+    private void OnSend(object s, RoutedEventArgs e)
+    {
+        var msg = (ChatInput.Text ?? "").Trim();
+        if (msg.Length == 0) return;
+        ChatInput.Text = "";
+        Say("you", msg);
+        string reply = Agent.Handle(msg, SurfacePanel);   // reads the tree, acts through it
+        Say("agent", reply);
+        RefreshTree();                                     // reflect any state change (e.g. checked)
+    }
+
+    private void Say(string who, string text)
+    {
+        var bubble = new Border
+        {
+            Padding = new Thickness(9, 6, 9, 6),
+            CornerRadius = new CornerRadius(8),
+            HorizontalAlignment = who == "you" ? HorizontalAlignment.Right : HorizontalAlignment.Left,
+            Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources[
+                who == "you" ? "SystemControlBackgroundAccentBrush" : "SystemControlBackgroundChromeMediumLowBrush"],
+            Child = new TextBlock
+            {
+                Text = text,
+                TextWrapping = TextWrapping.Wrap,
+                MaxWidth = 320,
+                FontFamily = who == "system" ? new Microsoft.UI.Xaml.Media.FontFamily("Consolas") : null,
+                FontSize = who == "system" ? 11 : 13,
+            },
+        };
+        ChatLog.Children.Add(bubble);
+        ChatScroll.UpdateLayout();
+        ChatScroll.ChangeView(null, ChatScroll.ScrollableHeight, null);
+    }
 }

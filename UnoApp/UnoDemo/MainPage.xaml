@@ -3,36 +3,75 @@
       xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
       xmlns:local="using:UnoDemo"
       Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
-  <ScrollViewer>
-    <StackPanel Margin="20" Spacing="12" HorizontalAlignment="Left">
-      <TextBlock Text="AT-SPI accessibility demo (Uno)" FontWeight="Bold"/>
 
-      <Button x:Name="OpenFileManagerButton"
-              AutomationProperties.Name="Open File Manager"
-              Content="Open File Manager"/>
+  <Grid>
+    <Grid.ColumnDefinitions>
+      <ColumnDefinition Width="180"/>
+      <ColumnDefinition Width="*"/>
+      <ColumnDefinition Width="400"/>
+    </Grid.ColumnDefinitions>
 
-      <Button x:Name="SaveDocumentButton"
-              AutomationProperties.Name="Save Document"
-              Content="Save Document"/>
-
-      <TextBox x:Name="SearchBox"
-               AutomationProperties.Name="Search box"
-               PlaceholderText="Type to search..."/>
-
-      <CheckBox x:Name="NotificationsCheckBox"
-                AutomationProperties.Name="Enable notifications"
-                Content="Enable notifications"/>
-
-      <Slider x:Name="VolumeSlider"
-              AutomationProperties.Name="Volume"
-              Minimum="0" Maximum="100" Value="50" Width="200"/>
-
-      <ComboBox x:Name="ThemeCombo"
-                AutomationProperties.Name="Theme selector"
-                SelectedIndex="0">
-        <ComboBoxItem>Light</ComboBoxItem>
-        <ComboBoxItem>Dark</ComboBoxItem>
-      </ComboBox>
+    <!-- PALETTE : drop controls onto the surface -->
+    <StackPanel Grid.Column="0" Padding="14" Spacing="8"
+                Background="{ThemeResource SystemControlBackgroundChromeMediumLowBrush}">
+      <TextBlock Text="PALETTE" FontSize="11" FontWeight="SemiBold" Opacity="0.6"/>
+      <Button Content="＋ Button"    Click="AddButton"   HorizontalAlignment="Stretch"/>
+      <Button Content="＋ Text box"  Click="AddTextBox"  HorizontalAlignment="Stretch"/>
+      <Button Content="＋ Check box" Click="AddCheckBox" HorizontalAlignment="Stretch"/>
+      <Button Content="＋ Slider"    Click="AddSlider"   HorizontalAlignment="Stretch"/>
+      <Button Content="＋ Combo box" Click="AddCombo"    HorizontalAlignment="Stretch"/>
+      <TextBlock Text="drop a control → the tree recomputes" FontSize="11" Opacity="0.5"
+                 TextWrapping="Wrap" Margin="0,8,0,0"/>
     </StackPanel>
-  </ScrollViewer>
+
+    <!-- DESIGN SURFACE : the app being built -->
+    <ScrollViewer Grid.Column="1" Padding="20">
+      <StackPanel x:Name="SurfacePanel" Spacing="12" HorizontalAlignment="Left">
+        <TextBlock Text="Accessibility Designer — surface" FontWeight="Bold"/>
+        <Button   AutomationProperties.Name="Open File Manager" Content="Open File Manager"/>
+        <Button   AutomationProperties.Name="Save Document"     Content="Save Document"/>
+        <TextBox  AutomationProperties.Name="Search box"        PlaceholderText="Type to search..."/>
+        <CheckBox AutomationProperties.Name="Enable notifications" Content="Enable notifications"/>
+        <Slider   AutomationProperties.Name="Volume" Minimum="0" Maximum="100" Value="50" Width="220"/>
+        <ComboBox AutomationProperties.Name="Theme selector" SelectedIndex="0">
+          <ComboBoxItem>Light</ComboBoxItem>
+          <ComboBoxItem>Dark</ComboBoxItem>
+        </ComboBox>
+      </StackPanel>
+    </ScrollViewer>
+
+    <!-- TREE + AGENT CHAT -->
+    <Grid Grid.Column="2" Background="{ThemeResource SystemControlBackgroundChromeMediumLowBrush}">
+      <Grid.RowDefinitions>
+        <RowDefinition Height="*"/>
+        <RowDefinition Height="Auto"/>
+      </Grid.RowDefinitions>
+
+      <ScrollViewer Grid.Row="0" Padding="14">
+        <StackPanel Spacing="6">
+          <TextBlock Text="ACCESSIBILITY TREE" FontSize="11" FontWeight="SemiBold" Opacity="0.6"/>
+          <TextBlock x:Name="TreeText" FontFamily="Consolas" FontSize="12"
+                     TextWrapping="NoWrap" Text="(loading…)"/>
+        </StackPanel>
+      </ScrollViewer>
+
+      <StackPanel Grid.Row="1" Padding="14" Spacing="8"
+                  Background="{ThemeResource SystemControlBackgroundChromeMediumBrush}">
+        <TextBlock Text="AGENT CHAT — it only reads the tree" FontSize="11" FontWeight="SemiBold" Opacity="0.6"/>
+        <ScrollViewer x:Name="ChatScroll" Height="150">
+          <StackPanel x:Name="ChatLog" Spacing="6"/>
+        </ScrollViewer>
+        <Grid ColumnSpacing="8">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>
+          </Grid.ColumnDefinitions>
+          <TextBox x:Name="ChatInput" Grid.Column="0"
+                   PlaceholderText="enable notifications · press Save · what can you see?"
+                   KeyDown="ChatKeyDown"/>
+          <Button  x:Name="SendBtn" Grid.Column="1" Content="Send" Click="OnSend"/>
+        </Grid>
+      </StackPanel>
+    </Grid>
+  </Grid>
 </Page>
