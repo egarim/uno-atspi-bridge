@@ -28,6 +28,34 @@ public sealed partial class MainPage : Page
         // the same tree is exposed natively by Uno; the in-app agent below reads it directly.
         if (OperatingSystem.IsLinux())
             UnoDemo.Atspi.AtspiBridge.TryStart(SurfacePanel);
+
+        if (Environment.GetEnvironmentVariable("UNODEMO_AUTOPLAY") == "1")
+            AutoPlay();
+    }
+
+    // Self-playing demo for headless screen-recording: drop a control (tree recomputes),
+    // then let the in-app agent perceive + act — all visible on screen, no human input.
+    private async void AutoPlay()
+    {
+        await System.Threading.Tasks.Task.Delay(1200);
+        AddCheckBox(this, null!);                                   // drop → tree recomputes
+        await System.Threading.Tasks.Task.Delay(1800);
+
+        Say("you", "what can you see?");
+        await System.Threading.Tasks.Task.Delay(500);
+        Say("agent", Agent.Handle("what can you see?", SurfacePanel));
+        await System.Threading.Tasks.Task.Delay(2800);
+
+        Say("you", "enable notifications");
+        await System.Threading.Tasks.Task.Delay(500);
+        Say("agent", Agent.Handle("enable notifications", SurfacePanel));   // checkbox ticks
+        RefreshTree();
+        await System.Threading.Tasks.Task.Delay(2800);
+
+        Say("you", "press Save");
+        await System.Threading.Tasks.Task.Delay(500);
+        Say("agent", Agent.Handle("press Save", SurfacePanel));
+        await System.Threading.Tasks.Task.Delay(1800);
     }
 
     // ---- palette: drop controls, tree recomputes ----
