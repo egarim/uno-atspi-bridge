@@ -1,0 +1,23 @@
+Connected via UI Automation (Windows).
+
+Tree of pid:25896 (depth 6):
+[Application] "UnoDemo"  
+  [Window] "UnoDemo"  @52,52 1440x749
+    [Pane] (unnamed)  @60,83 1424x710
+      [Pane] (unnamed)  @60,83 1424x710
+        [Unknown] (unnamed)  
+        [Pane] (unnamed)  @60,83 1424x710
+          [Text] "AT-SPI accessibility demo (Uno)"  @80,103 209x19  text="AT-SPI accessibility demo (Uno)"
+          [Button] "Open File Manager"  @80,134 142x32
+          [Button] "Save Document"  @80,178 121x32
+          [Edit] "Search box"  @80,222 209x32  text="invoices"
+          [CheckBox] "Enable notifications"  @80,266 149x32
+          [Slider] "Volume"  @85,310 200x32
+          [ComboBox] "Theme selector"  @76,350 89x40
+          [ScrollBar] "Vertical"  
+    [Unknown] "UnoDemo"  @60,60 1424x23
+      [MenuBar] "System Menu Bar"  @60,60 22x22
+        [MenuItem] "System"  @60,60 22x22
+      [Button] "Minimize"  @1345,53 47x30
+      [Button] "Maximize"  @1392,53 46x30
+      [Button] "Close"  @1438,53 47x30
