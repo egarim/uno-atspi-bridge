@@ -37,7 +37,11 @@ public sealed partial class MainPage : Page
         Console.WriteLine(sb.ToString());
 
         // Start our AT-SPI bridge: project these peers onto the a11y D-Bus.
+        // Only meaningful on the Skia (Linux) head — the native Windows head
+        // already exposes full UI Automation, no bridge needed.
+#if !WINDOWS
         UnoDemo.Atspi.AtspiBridge.TryStart(this);
+#endif
     }
 
     // walk the visual tree; for each FrameworkElement, create its peer and print it

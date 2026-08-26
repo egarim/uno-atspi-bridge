@@ -15,6 +15,12 @@ Full write-up: [I Gave Uno Platform a Linux Accessibility Backend in an Afternoo
 
 *The demo app whose controls the bridge exposes.*
 
+> **Windows needs none of this.** The same app built with its native Windows head
+> (WinAppSDK) exposes full UI Automation out of the box — an agent drives every control
+> natively, no bridge. Validated with Telekinesis on real hardware:
+> [results/windows-uia-native.md](results/windows-uia-native.md). The bridge (and the
+> SkiaSharp/FreeType fix) are Linux-only concerns.
+
 ## What works
 
 | capability | status |
