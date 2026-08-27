@@ -24,6 +24,8 @@ internal sealed class Node
     public bool Checked;                                     // live toggle state
     public bool HasRange; public double Min, Max, Val;       // live slider state → Value iface
     public bool HasText;  public string Text = "";           // live entry text → EditableText iface
+    public bool Expandable, Expanded;                        // combo box → Selection iface
+    public bool Selectable, Selected; public int ItemIndex;  // combo item
     public Node? Parent;
     public readonly List<Node> Children = new();
     public Microsoft.UI.Xaml.FrameworkElement? Element;      // source, for live events
@@ -57,8 +59,10 @@ public sealed class AtspiBridge
     const string ValueIface = "org.a11y.atspi.Value";
     const string EditIface = "org.a11y.atspi.EditableText";
     const string TextIface = "org.a11y.atspi.Text";
+    const string SelIface = "org.a11y.atspi.Selection";
     const string PropIface = "org.freedesktop.DBus.Properties";
-    const int ST_CHECKED = 4, ST_EDITABLE = 7, ST_ENABLED = 8, ST_FOCUSABLE = 11,
+    const int ST_CHECKED = 4, ST_EDITABLE = 7, ST_ENABLED = 8, ST_EXPANDABLE = 9,
+              ST_EXPANDED = 10, ST_FOCUSABLE = 11, ST_SELECTABLE = 22, ST_SELECTED = 23,
               ST_SENSITIVE = 24, ST_SHOWING = 25, ST_VISIBLE = 30;
 
     DBusConnection? _conn;
@@ -145,6 +149,7 @@ public sealed class AtspiBridge
     void WalkVisual(DependencyObject node, Node parent)
     {
         Node attach = parent;
+        bool descend = true;
         if (node is Microsoft.UI.Xaml.FrameworkElement fe)
         {
             var p = FrameworkElementAutomationPeer.CreatePeerForElement(fe);
@@ -169,11 +174,37 @@ public sealed class AtspiBridge
                 { n.HasRange = true; n.Min = rb0.Minimum; n.Max = rb0.Maximum; n.Val = rb0.Value; }
                 if (fe is Microsoft.UI.Xaml.Controls.TextBox tx0)
                 { n.HasText = true; n.Text = tx0.Text ?? ""; }
+                if (fe is Microsoft.UI.Xaml.Controls.ComboBox cb0)
+                {
+                    // Combo items live in a popup, not the visual tree, so the walk
+                    // can't reach them — surface the Items collection as bus children
+                    // (role: list item), each selectable through the Selection iface.
+                    n.Expandable = true;
+                    for (int ix = 0; ix < cb0.Items.Count; ix++)
+                    {
+                        var item = cb0.Items[ix];
+                        var itemEl = item as Microsoft.UI.Xaml.Controls.ComboBoxItem;
+                        var child = new Node
+                        {
+                            Path = $"/org/a11y/atspi/accessible/{_next++}",
+                            Name = (itemEl?.Content ?? item)?.ToString() ?? $"item {ix}",
+                            Role = 32, RoleName = "list item",
+                            Enabled = true, Parent = n, Element = itemEl,
+                            Selectable = true, Selected = ix == cb0.SelectedIndex,
+                            ItemIndex = ix,
+                        };
+                        n.Children.Add(child);
+                        _byPath[child.Path] = child;
+                    }
+                    descend = false;   // don't walk the visual subtree — the content
+                                       // presenter shows a copy of the selected item
+                }
                 parent.Children.Add(n);
                 _byPath[n.Path] = n;
                 attach = n;
             }
         }
+        if (!descend) return;
         int c = VisualTreeHelper.GetChildrenCount(node);
         for (int i = 0; i < c; i++)
             WalkVisual(VisualTreeHelper.GetChild(node, i), attach);
@@ -201,6 +232,17 @@ public sealed class AtspiBridge
             if (node.Element is Microsoft.UI.Xaml.Controls.TextBox tx)
                 tx.TextChanged += (_, _) =>
                 { node.Text = tx.Text ?? ""; EmitPropertyChange(node, "accessible-value", node.Text); };
+            if (node.Element is Microsoft.UI.Xaml.Controls.ComboBox cb)
+            {
+                cb.DropDownOpened += (_, _) => { node.Expanded = true;  EmitStateChanged(node, "expanded", 1); };
+                cb.DropDownClosed += (_, _) => { node.Expanded = false; EmitStateChanged(node, "expanded", 0); };
+                cb.SelectionChanged += (_, _) =>
+                {
+                    foreach (var item in node.Children)
+                        item.Selected = item.ItemIndex == cb.SelectedIndex;
+                    EmitSelectionChanged(node);
+                };
+            }
         }
     }
 
@@ -219,6 +261,26 @@ public sealed class AtspiBridge
             w.WriteStructureStart(); w.WriteString(_unique); w.WriteObjectPath(RootPath);
             _conn.TrySendMessage(w.CreateMessage());
             Console.WriteLine($"[atspi] emit state-changed:{detail}={value} on {n.Name}");
+        }
+        catch (Exception ex) { Console.WriteLine($"[atspi] emit failed: {ex.Message}"); }
+    }
+
+    // org.a11y.atspi.Event.Object.SelectionChanged — emitted (empty detail) when a
+    // container's selection changes.
+    void EmitSelectionChanged(Node n)
+    {
+        if (_conn is null) return;
+        try
+        {
+            var w = _conn.GetMessageWriter();
+            w.WriteSignalHeader(null, n.Path, "org.a11y.atspi.Event.Object", "SelectionChanged", "siiv(so)");
+            w.WriteString("");
+            w.WriteInt32(0);
+            w.WriteInt32(0);
+            w.WriteVariantInt32(0);
+            w.WriteStructureStart(); w.WriteString(_unique); w.WriteObjectPath(RootPath);
+            _conn.TrySendMessage(w.CreateMessage());
+            Console.WriteLine($"[atspi] emit selection-changed on {n.Name}");
         }
         catch (Exception ex) { Console.WriteLine($"[atspi] emit failed: {ex.Message}"); }
     }
@@ -270,6 +332,10 @@ public sealed class AtspiBridge
     // is the state-changed event HookLiveEvents emits when the control really changes.
     internal bool InvokeOnUi(Node n)
     {
+        // A combo item's element may be an unrealized container (popup never opened),
+        // so its action routes through the parent combo's selection instead.
+        if (n.Selectable && n.Parent is { } p)
+            return SelectChildOnUi(p, n.ItemIndex);
         var el = n.Element;
         var dq = el?.DispatcherQueue;
         if (el is null || dq is null) return false;
@@ -295,6 +361,28 @@ public sealed class AtspiBridge
                 rv.SetValue(clamped);
                 Console.WriteLine($"[atspi] SetCurrentValue '{n.Name}' = {clamped}");
             }
+        });
+    }
+
+    // Selection.SelectChild — the indexed item peer's ISelectionItemProvider
+    // .AddToSelection, falling back to SelectedIndex when the item container has
+    // no peer yet (Uno realizes popup containers lazily).
+    internal bool SelectChildOnUi(Node combo, int index)
+    {
+        var el = combo.Element as Microsoft.UI.Xaml.Controls.ComboBox;
+        var dq = el?.DispatcherQueue;
+        if (el is null || dq is null || index < 0) return false;
+        return dq.TryEnqueue(() =>
+        {
+            if (index >= el.Items.Count) return;
+            var itemEl = el.Items[index] as Microsoft.UI.Xaml.Controls.ComboBoxItem;
+            var peer = itemEl is null ? null : FrameworkElementAutomationPeer.CreatePeerForElement(itemEl);
+            if (peer?.GetPattern(PatternInterface.SelectionItem)
+                is Microsoft.UI.Xaml.Automation.Provider.ISelectionItemProvider sip)
+                sip.AddToSelection();
+            else
+                el.SelectedIndex = index;   // ponytail: unrealized container → select on the combo
+            Console.WriteLine($"[atspi] SelectChild {index} on '{combo.Name}' → '{combo.Children[index].Name}'");
         });
     }
 
@@ -332,6 +420,7 @@ public sealed class AtspiBridge
             else if (iface == ActionIface) Action(ctx, member);
             else if (iface == EditIface) EditableText(ctx, member);
             else if (iface == TextIface) Text(ctx, member);
+            else if (iface == SelIface) Selection(ctx, member);
             else if (iface == AppIface) Application(ctx, member);
             else if (iface == PropIface) Properties(ctx, member);
             else if (iface == "org.freedesktop.DBus.Introspectable" && member == "Introspect")
@@ -394,8 +483,9 @@ public sealed class AtspiBridge
 
         // org.a11y.atspi.Action — the write-path. A client (Orca / our agent) calls
         // DoAction to activate the control the way a screen reader would.
-        bool Actionable => _n.RoleName is "push button" or "check box" or "radio button" or "combo box";
-        static string ActionName(string role) => role switch
+        bool Actionable => _n.Selectable ||
+            _n.RoleName is "push button" or "check box" or "radio button" or "combo box";
+        string ActionName() => _n.Selectable ? "select" : _n.RoleName switch
         {
             "push button" => "press",
             "check box" => "toggle", "radio button" => "toggle",
@@ -411,7 +501,7 @@ public sealed class AtspiBridge
                 case "GetName":
                 case "GetLocalizedName":
                     ctx.Request.GetBodyReader().ReadInt32();          // action index (only 0)
-                    ReplyStr(ctx, "s", ActionName(_n.RoleName)); break;
+                    ReplyStr(ctx, "s", ActionName()); break;
                 case "GetDescription":
                     ctx.Request.GetBodyReader().ReadInt32(); ReplyStr(ctx, "s", ""); break;
                 case "GetKeyBinding":
@@ -421,7 +511,7 @@ public sealed class AtspiBridge
                     var w = ctx.CreateReplyWriter("a(sss)");
                     var a = w.WriteArrayStart(DBusType.Struct);
                     if (Actionable)
-                    { w.WriteStructureStart(); w.WriteString(ActionName(_n.RoleName)); w.WriteString(""); w.WriteString(""); }
+                    { w.WriteStructureStart(); w.WriteString(ActionName()); w.WriteString(""); w.WriteString(""); }
                     w.WriteArrayEnd(a);
                     ctx.Reply(w.CreateMessage()); break;
                 }
@@ -431,6 +521,36 @@ public sealed class AtspiBridge
                     bool ok = _b.InvokeOnUi(_n);
                     ReplyBool(ctx, ok); break;
                 }
+            }
+        }
+
+        // org.a11y.atspi.Selection — minimal surface: enumerate/select the combo's
+        // items over the bus.
+        void Selection(MethodContext ctx, string m)
+        {
+            var sel = _n.Children.Find(c => c.Selected);
+            switch (m)
+            {
+                case "GetSelectedChild":
+                {
+                    int i = ctx.Request.GetBodyReader().ReadInt32();
+                    ReplyRef(ctx, i == 0 && sel != null ? sel.Path : "/org/a11y/atspi/null"); break;
+                }
+                case "SelectChild":
+                {
+                    int i = ctx.Request.GetBodyReader().ReadInt32();
+                    ReplyBool(ctx, _b.SelectChildOnUi(_n, i)); break;
+                }
+                case "IsChildSelected":
+                {
+                    int i = ctx.Request.GetBodyReader().ReadInt32();
+                    ReplyBool(ctx, i >= 0 && i < _n.Children.Count && _n.Children[i].Selected); break;
+                }
+                case "GetNSelectedChildren": ReplyI(ctx, sel != null ? 1 : 0); break;
+                case "DeselectSelectedChild":
+                case "DeselectChild":
+                case "SelectAll":
+                case "ClearSelection": ReplyBool(ctx, false); break;   // combo always has one selection
             }
         }
 
@@ -506,6 +626,12 @@ public sealed class AtspiBridge
                     });
                     ctx.Reply(w.CreateMessage());
                 }
+                else if (piface == SelIface && _n.Expandable)
+                {
+                    var w = ctx.CreateReplyWriter("v");
+                    w.WriteVariantInt32(prop == "NSelectedChildren" ? (_n.Children.Exists(c => c.Selected) ? 1 : 0) : 0);
+                    ctx.Reply(w.CreateMessage());
+                }
                 else if (piface == TextIface && _n.HasText)
                 {
                     var w = ctx.CreateReplyWriter("v");
@@ -575,6 +701,8 @@ public sealed class AtspiBridge
             if (_n.Focusable) set(ST_FOCUSABLE);
             if (_n.Checked) set(ST_CHECKED);
             if (_n.HasText) set(ST_EDITABLE);
+            if (_n.Expandable) { set(ST_EXPANDABLE); if (_n.Expanded) set(ST_EXPANDED); }
+            if (_n.Selectable) { set(ST_SELECTABLE); if (_n.Selected) set(ST_SELECTED); }
             var w = ctx.CreateReplyWriter("au");
             var a = w.WriteArrayStart(DBusType.UInt32);
             w.WriteUInt32(w0); w.WriteUInt32(0);
@@ -590,6 +718,7 @@ public sealed class AtspiBridge
             if (Actionable) w.WriteString(ActionIface);
             if (_n.HasRange) w.WriteString(ValueIface);
             if (_n.HasText) { w.WriteString(TextIface); w.WriteString(EditIface); }
+            if (_n.Expandable) w.WriteString(SelIface);
             if (_n.Parent is null) w.WriteString(AppIface);
             w.WriteArrayEnd(a);
             ctx.Reply(w.CreateMessage());
