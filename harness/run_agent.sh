@@ -34,6 +34,10 @@ dbus-run-session -- bash -c '
   echo "----------------------------------------------------------------"
   RC=0; python3 /harness/atspi_agent.py unodemo "check box" notification || RC=$?
   echo "----------------------------------------------------------------"
+  echo ">> AGENT RUN step 5: Value (slider) + EditableText (entry)"
+  echo "----------------------------------------------------------------"
+  python3 /harness/atspi_agent.py unodemo all || RC=$?
+  echo "----------------------------------------------------------------"
   sleep 1
 
   echo ">> events the listener caught (this is what Orca would hear):"

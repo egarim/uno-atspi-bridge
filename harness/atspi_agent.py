@@ -67,6 +67,42 @@ def action_name(acc, i=0):
         try: return Atspi.Action.get_name(acc, i)
         except Exception: return "?"
 
+def iface(acc, getter, legacy):
+    try: return getattr(acc, getter)()
+    except Exception:
+        try: return getattr(acc, legacy)()
+        except Exception: return None
+
+def proof_value(app):
+    """Drive the Volume slider through org.a11y.atspi.Value: read → set → read back."""
+    sl = walk(app, "slider", "volume")
+    if not sl: print("agent > no slider found"); return False
+    v = iface(sl, "get_value_iface", "get_value")
+    lo, hi, cur = v.get_minimum_value(), v.get_maximum_value(), v.get_current_value()
+    print(f"agent > [slider] '{sl.get_name()}' range=[{lo},{hi}] value={cur}")
+    target = 80.0 if cur != 80.0 else 20.0
+    v.set_current_value(target)
+    time.sleep(1.5)
+    after = iface(sl, "get_value_iface", "get_value").get_current_value()
+    print(f"agent > set_current_value({target}) → read back {after}")
+    ok = abs(after - target) < 0.01
+    print(f"agent > {'✓ PROOF: slider moved through the Value interface.' if ok else '✗ value did not change'}")
+    return ok
+
+def proof_text(app):
+    """Type into the Search box through org.a11y.atspi.EditableText, read back via Text."""
+    tb = walk(app, "entry", "search")
+    if not tb: print("agent > no entry found"); return False
+    before = Atspi.Text.get_text(tb, 0, -1)
+    print(f"agent > [entry] '{tb.get_name()}' text before = {before!r}")
+    Atspi.EditableText.set_text_contents(tb, "hello from the bus")
+    time.sleep(1.5)
+    after = Atspi.Text.get_text(tb, 0, -1)
+    print(f"agent > set_text_contents(...) → read back {after!r}")
+    ok = after == "hello from the bus"
+    print(f"agent > {'✓ PROOF: text written through EditableText, read back through Text.' if ok else '✗ text did not change'}")
+    return ok
+
 def main():
     Atspi.init()
     print(f"agent > looking for app ~ {APP!r}")
@@ -78,6 +114,11 @@ def main():
     if not app:
         print("agent > app not found on the AT-SPI desktop"); sys.exit(2)
     print(f"agent > app: {app.get_name()!r}")
+
+    if ROLE == "all":   # step 5: slider (Value) + entry (EditableText/Text)
+        ok = proof_value(app)
+        ok = proof_text(app) and ok
+        Atspi.exit(); sys.exit(0 if ok else 5)
 
     print(f"agent > read tree → find [{ROLE}] name~{NAME!r}")
     target = walk(app, ROLE, NAME)
