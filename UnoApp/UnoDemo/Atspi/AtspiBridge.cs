@@ -1,9 +1,8 @@
-// Minimal AT-SPI2 backend for Uno on Linux (PoC).
-//
-// Walks Uno's AutomationPeer tree, models each control as an AT-SPI accessible,
-// and serves them over the a11y D-Bus so an AT-SPI client (Orca / atspi_dump.py)
-// can read role/name/box/states. Implements enough of org.a11y.atspi.Accessible +
-// Component + Application + the Socket.Embed handshake for the tree to be visible.
+// The D-Bus half of the bridge: serves the PeerTree over the a11y bus so an
+// AT-SPI client (Orca / an agent) can read AND drive the controls. Implements
+// Accessible + Component + Application + Action + Value + EditableText + Text +
+// Selection and the Socket.Embed handshake; the tree itself (walk, live state,
+// write-path through automation providers) lives in PeerTree.cs.
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
@@ -12,42 +11,6 @@ using Microsoft.UI.Xaml.Media;
 using Tmds.DBus.Protocol;
 
 namespace UnoDemo.Atspi;
-
-internal sealed class Node
-{
-    public string Path = "";
-    public string Name = "";
-    public uint Role;
-    public string RoleName = "";
-    public (int x, int y, int w, int h) Box;                 // screen coordinates
-    public bool Enabled, Focusable;
-    public bool Checked;                                     // live toggle state
-    public bool HasRange; public double Min, Max, Val;       // live slider state → Value iface
-    public bool HasText;  public string Text = "";           // live entry text → EditableText iface
-    public bool Expandable, Expanded;                        // combo box → Selection iface
-    public bool Selectable, Selected; public int ItemIndex;  // combo item
-    public Node? Parent;
-    public readonly List<Node> Children = new();
-    public Microsoft.UI.Xaml.FrameworkElement? Element;      // source, for live events
-}
-
-internal static class RoleMap
-{
-    // ids are the real AtspiRole enum values (libatspi derives the role NAME from
-    // the numeric GetRole, not from GetRoleName).
-    public static (uint, string) Map(AutomationControlType t) => t switch
-    {
-        AutomationControlType.Button   => (43u, "push button"),  // PUSH_BUTTON
-        AutomationControlType.Edit     => (79u, "entry"),        // ENTRY
-        AutomationControlType.CheckBox => (7u,  "check box"),     // CHECK_BOX
-        AutomationControlType.Slider   => (51u, "slider"),       // SLIDER
-        AutomationControlType.ComboBox => (11u, "combo box"),    // COMBO_BOX
-        AutomationControlType.Text     => (29u, "label"),        // LABEL
-        AutomationControlType.List     => (31u, "list"),         // LIST
-        AutomationControlType.ListItem => (32u, "list item"),    // LIST_ITEM
-        _                              => (39u, "panel"),        // PANEL
-    };
-}
 
 public sealed class AtspiBridge
 {
@@ -67,10 +30,7 @@ public sealed class AtspiBridge
 
     DBusConnection? _conn;
     string _unique = "";
-    readonly Dictionary<string, Node> _byPath = new();
-    readonly Node _root = new() { Path = RootPath, Name = "UnoDemo", Role = 75, RoleName = "application" };
-    int _next = 1;
-    (int x, int y) _origin;   // window position on screen (added to window-relative rects)
+    PeerTree? _tree;
 
     public static async void TryStart(Microsoft.UI.Xaml.FrameworkElement uiRoot)
     {
@@ -81,16 +41,17 @@ public sealed class AtspiBridge
     async Task StartAsync(Microsoft.UI.Xaml.FrameworkElement uiRoot)
     {
         // window position on screen (for screen-space coordinates)
+        (int x, int y) origin = (0, 0);
         try
         {
             var p = App.Win?.AppWindow?.Position;
-            if (p is { } pos) _origin = (pos.X, pos.Y);
+            if (p is { } pos) origin = (pos.X, pos.Y);
         }
         catch { }
 
-        WalkVisual(uiRoot, _root);
-        ApplyScreenCoordinates();
-        Console.WriteLine($"[atspi] built {_byPath.Count} control nodes (+root); window origin {_origin}");
+        var root = new Node { Path = RootPath, Name = "UnoDemo", Role = 75, RoleName = "application" };
+        _tree = new PeerTree(uiRoot, root, "/org/a11y/atspi/accessible/", origin);
+        Console.WriteLine($"[atspi] built {_tree.ByPath.Count} control nodes (+root); window origin {origin}");
 
         var address = await GetA11yBusAddressAsync();
         if (string.IsNullOrEmpty(address)) { Console.WriteLine("[atspi] no a11y bus"); return; }
@@ -101,27 +62,19 @@ public sealed class AtspiBridge
         _unique = _conn.UniqueName ?? "";
         Console.WriteLine($"[atspi] connected, unique = {_unique}");
 
-        _conn.AddMethodHandler(new NodeHandler(this, _root));
-        foreach (var n in _byPath.Values) _conn.AddMethodHandler(new NodeHandler(this, n));
+        _conn.AddMethodHandler(new NodeHandler(this, root));
+        foreach (var n in _tree.ByPath.Values) _conn.AddMethodHandler(new NodeHandler(this, n));
 
         await EmbedAsync();
-        HookLiveEvents();
+
+        // the tree raises change notifications; this transport turns them into signals
+        _tree.StateChanged += EmitStateChanged;
+        _tree.PropertyChanged += EmitPropertyChange;
+        _tree.SelectionChanged += EmitSelectionChanged;
+        _tree.HookLiveEvents();
         Console.WriteLine("[atspi] embedded; tree is live, events wired");
 
         _ = EventDemoAsync();   // drive a focus + toggle so events are observable
-    }
-
-    // WinUI's GetBoundingRectangle is spec'd as screen-relative. If a head returns
-    // window-relative rects instead (outermost node sits at ~0 while the window is
-    // offset), add the window origin so every box is true screen space.
-    void ApplyScreenCoordinates()
-    {
-        if (_origin == (0, 0)) return;                       // nothing to add
-        var top = _root.Children.Count > 0 ? _root.Children[0] : null;
-        bool windowRelative = top != null && top.Box.x < _origin.x - 4;
-        if (!windowRelative) return;
-        foreach (var n in _byPath.Values)
-            n.Box = (n.Box.x + _origin.x, n.Box.y + _origin.y, n.Box.w, n.Box.h);
     }
 
     async Task<string?> GetA11yBusAddressAsync()
@@ -144,109 +97,6 @@ public sealed class AtspiBridge
         w.WriteString(_unique);
         w.WriteObjectPath(RootPath);
         await _conn.CallMethodAsync(w.CreateMessage());
-    }
-
-    void WalkVisual(DependencyObject node, Node parent)
-    {
-        Node attach = parent;
-        bool descend = true;
-        if (node is Microsoft.UI.Xaml.FrameworkElement fe)
-        {
-            var p = FrameworkElementAutomationPeer.CreatePeerForElement(fe);
-            if (p != null)
-            {
-                var (role, roleName) = RoleMap.Map(Try(() => p.GetAutomationControlType(), AutomationControlType.Custom));
-                var r = Try(() => p.GetBoundingRectangle(), default(Windows.Foundation.Rect));
-                var n = new Node
-                {
-                    Path = $"/org/a11y/atspi/accessible/{_next++}",
-                    Name = Try(() => p.GetName(), "") ?? "",
-                    Role = role, RoleName = roleName,
-                    Box = ((int)r.X, (int)r.Y, (int)r.Width, (int)r.Height),
-                    Enabled = Try(() => p.IsEnabled(), false),
-                    Focusable = Try(() => p.IsKeyboardFocusable(), false),
-                    Parent = parent,
-                    Element = fe,
-                };
-                if (fe is Microsoft.UI.Xaml.Controls.Primitives.ToggleButton tb0)
-                    n.Checked = tb0.IsChecked == true;
-                if (fe is Microsoft.UI.Xaml.Controls.Primitives.RangeBase rb0)
-                { n.HasRange = true; n.Min = rb0.Minimum; n.Max = rb0.Maximum; n.Val = rb0.Value; }
-                if (fe is Microsoft.UI.Xaml.Controls.TextBox tx0)
-                { n.HasText = true; n.Text = tx0.Text ?? ""; }
-                if (fe is Microsoft.UI.Xaml.Controls.ComboBox cb0)
-                {
-                    // Combo items live in a popup, not the visual tree, so the walk
-                    // can't reach them — surface the Items collection as bus children
-                    // (role: list item), each selectable through the Selection iface.
-                    n.Expandable = true;
-                    for (int ix = 0; ix < cb0.Items.Count; ix++)
-                    {
-                        var item = cb0.Items[ix];
-                        var itemEl = item as Microsoft.UI.Xaml.Controls.ComboBoxItem;
-                        var child = new Node
-                        {
-                            Path = $"/org/a11y/atspi/accessible/{_next++}",
-                            Name = (itemEl?.Content ?? item)?.ToString() ?? $"item {ix}",
-                            Role = 32, RoleName = "list item",
-                            Enabled = true, Parent = n, Element = itemEl,
-                            Selectable = true, Selected = ix == cb0.SelectedIndex,
-                            ItemIndex = ix,
-                        };
-                        n.Children.Add(child);
-                        _byPath[child.Path] = child;
-                    }
-                    // the combo also exposes its current selection as Text
-                    n.Text = n.Children.Find(c => c.Selected)?.Name ?? "";
-                    descend = false;   // don't walk the visual subtree — the content
-                                       // presenter shows a copy of the selected item
-                }
-                parent.Children.Add(n);
-                _byPath[n.Path] = n;
-                attach = n;
-            }
-        }
-        if (!descend) return;
-        int c = VisualTreeHelper.GetChildrenCount(node);
-        for (int i = 0; i < c; i++)
-            WalkVisual(VisualTreeHelper.GetChild(node, i), attach);
-    }
-
-    static T Try<T>(Func<T> f, T dflt) { try { return f(); } catch { return dflt; } }
-
-    // ---- live events: project Uno UI events onto AT-SPI state-changed signals ----
-    void HookLiveEvents()
-    {
-        foreach (var n in _byPath.Values)
-        {
-            if (n.Element is null) continue;
-            var node = n;
-            node.Element.GotFocus  += (_, _) => EmitStateChanged(node, "focused", 1);
-            node.Element.LostFocus += (_, _) => EmitStateChanged(node, "focused", 0);
-            if (node.Element is Microsoft.UI.Xaml.Controls.Primitives.ToggleButton tb)
-            {
-                tb.Checked   += (_, _) => { node.Checked = true;  EmitStateChanged(node, "checked", 1); };
-                tb.Unchecked += (_, _) => { node.Checked = false; EmitStateChanged(node, "checked", 0); };
-            }
-            if (node.Element is Microsoft.UI.Xaml.Controls.Primitives.RangeBase rb)
-                rb.ValueChanged += (_, e) =>
-                { node.Val = e.NewValue; EmitPropertyChange(node, "accessible-value", e.NewValue); };
-            if (node.Element is Microsoft.UI.Xaml.Controls.TextBox tx)
-                tx.TextChanged += (_, _) =>
-                { node.Text = tx.Text ?? ""; EmitPropertyChange(node, "accessible-value", node.Text); };
-            if (node.Element is Microsoft.UI.Xaml.Controls.ComboBox cb)
-            {
-                cb.DropDownOpened += (_, _) => { node.Expanded = true;  EmitStateChanged(node, "expanded", 1); };
-                cb.DropDownClosed += (_, _) => { node.Expanded = false; EmitStateChanged(node, "expanded", 0); };
-                cb.SelectionChanged += (_, _) =>
-                {
-                    foreach (var item in node.Children)
-                        item.Selected = item.ItemIndex == cb.SelectedIndex;
-                    node.Text = node.Children.Find(c => c.Selected)?.Name ?? "";
-                    EmitSelectionChanged(node);
-                };
-            }
-        }
     }
 
     // org.a11y.atspi.Event.Object.StateChanged  body: siiv(so)
@@ -316,95 +166,11 @@ public sealed class AtspiBridge
         // events on the bus are the ones the agent's DoAction actually caused.
         if (Environment.GetEnvironmentVariable("UNODEMO_NO_AUTODEMO") == "1") return;
         await Task.Delay(3000);
-        var entry = FindByRole("entry");
+        var entry = _tree?.FindByRole("entry");
         entry?.Element?.Focus(Microsoft.UI.Xaml.FocusState.Programmatic);
         await Task.Delay(1500);
-        if (FindByRole("check box")?.Element is Microsoft.UI.Xaml.Controls.Primitives.ToggleButton cb)
+        if (_tree?.FindByRole("check box")?.Element is Microsoft.UI.Xaml.Controls.Primitives.ToggleButton cb)
             cb.IsChecked = true;
-    }
-
-    Node? FindByRole(string roleName)
-    {
-        foreach (var n in _byPath.Values) if (n.RoleName == roleName) return n;
-        return null;
-    }
-
-    // ---- the write-path: an incoming AT-SPI Action.DoAction drives the real control ----
-    // AT-SPI calls arrive on the D-Bus thread; UI mutation must hop to Uno's dispatcher.
-    // We reply true once the action is *dispatched* (AT-SPI semantics); the actual proof
-    // is the state-changed event HookLiveEvents emits when the control really changes.
-    internal bool InvokeOnUi(Node n)
-    {
-        // A combo item's element may be an unrealized container (popup never opened),
-        // so its action routes through the parent combo's selection instead.
-        if (n.Selectable && n.Parent is { } p)
-            return SelectChildOnUi(p, n.ItemIndex);
-        var el = n.Element;
-        var dq = el?.DispatcherQueue;
-        if (el is null || dq is null) return false;
-        return dq.TryEnqueue(() =>
-        {
-            var (ok, detail) = UnoDemo.Agent.Act(el);   // GetPattern(Invoke/Toggle) — same helper as the in-app agent
-            Console.WriteLine($"[atspi] DoAction '{n.Name}': {detail} (ok={ok})");
-        });
-    }
-
-    // Value.CurrentValue set → IRangeValueProvider.SetValue, clamped to [min, max].
-    internal bool SetRangeValueOnUi(Node n, double value)
-    {
-        var el = n.Element; var dq = el?.DispatcherQueue;
-        if (el is null || dq is null) return false;
-        return dq.TryEnqueue(() =>
-        {
-            var peer = FrameworkElementAutomationPeer.CreatePeerForElement(el);
-            if (peer?.GetPattern(PatternInterface.RangeValue)
-                is Microsoft.UI.Xaml.Automation.Provider.IRangeValueProvider rv)
-            {
-                var clamped = Math.Max(rv.Minimum, Math.Min(rv.Maximum, value));
-                rv.SetValue(clamped);
-                Console.WriteLine($"[atspi] SetCurrentValue '{n.Name}' = {clamped}");
-            }
-        });
-    }
-
-    // Selection.SelectChild — the indexed item peer's ISelectionItemProvider
-    // .AddToSelection, falling back to SelectedIndex when the item container has
-    // no peer yet (Uno realizes popup containers lazily).
-    internal bool SelectChildOnUi(Node combo, int index)
-    {
-        var el = combo.Element as Microsoft.UI.Xaml.Controls.ComboBox;
-        var dq = el?.DispatcherQueue;
-        if (el is null || dq is null || index < 0) return false;
-        return dq.TryEnqueue(() =>
-        {
-            if (index >= el.Items.Count) return;
-            var itemEl = el.Items[index] as Microsoft.UI.Xaml.Controls.ComboBoxItem;
-            var peer = itemEl is null ? null : FrameworkElementAutomationPeer.CreatePeerForElement(itemEl);
-            if (peer?.GetPattern(PatternInterface.SelectionItem)
-                is Microsoft.UI.Xaml.Automation.Provider.ISelectionItemProvider sip)
-                sip.AddToSelection();
-            else
-                el.SelectedIndex = index;   // ponytail: unrealized container → select on the combo
-            Console.WriteLine($"[atspi] SelectChild {index} on '{combo.Name}' → '{combo.Children[index].Name}'");
-        });
-    }
-
-    // EditableText → IValueProvider.SetValue; Insert/Delete are string surgery on
-    // the live text.
-    internal bool SetTextOnUi(Node n, string text)
-    {
-        var el = n.Element; var dq = el?.DispatcherQueue;
-        if (el is null || dq is null) return false;
-        return dq.TryEnqueue(() =>
-        {
-            var peer = FrameworkElementAutomationPeer.CreatePeerForElement(el);
-            if (peer?.GetPattern(PatternInterface.Value)
-                is Microsoft.UI.Xaml.Automation.Provider.IValueProvider { IsReadOnly: false } vp)
-            {
-                vp.SetValue(text);
-                Console.WriteLine($"[atspi] SetTextContents '{n.Name}' = \"{text}\"");
-            }
-        });
     }
 
     sealed class NodeHandler : IPathMethodHandler
@@ -523,7 +289,7 @@ public sealed class AtspiBridge
                 case "DoAction":
                 {
                     ctx.Request.GetBodyReader().ReadInt32();          // action index
-                    bool ok = _b.InvokeOnUi(_n);
+                    bool ok = _b._tree!.InvokeOnUi(_n);
                     ReplyBool(ctx, ok); break;
                 }
             }
@@ -544,7 +310,7 @@ public sealed class AtspiBridge
                 case "SelectChild":
                 {
                     int i = ctx.Request.GetBodyReader().ReadInt32();
-                    ReplyBool(ctx, _b.SelectChildOnUi(_n, i)); break;
+                    ReplyBool(ctx, _b._tree!.SelectChildOnUi(_n, i)); break;
                 }
                 case "IsChildSelected":
                 {
@@ -583,14 +349,14 @@ public sealed class AtspiBridge
             switch (m)
             {
                 case "SetTextContents":
-                    ReplyBool(ctx, _b.SetTextOnUi(_n, r.ReadString())); break;
+                    ReplyBool(ctx, _b._tree!.SetTextOnUi(_n, r.ReadString())); break;
                 case "InsertText":
                 {
                     int pos = r.ReadInt32(); string s = r.ReadString(); int len = r.ReadInt32();
                     var cur = _n.Text;
                     pos = Math.Max(0, Math.Min(pos, cur.Length));
                     var ins = len >= 0 && len < s.Length ? s.Substring(0, len) : s;
-                    ReplyBool(ctx, _b.SetTextOnUi(_n, cur.Insert(pos, ins))); break;
+                    ReplyBool(ctx, _b._tree!.SetTextOnUi(_n, cur.Insert(pos, ins))); break;
                 }
                 case "DeleteText":
                 {
@@ -599,7 +365,7 @@ public sealed class AtspiBridge
                     start = Math.Max(0, Math.Min(start, cur.Length));
                     end = Math.Max(start, Math.Min(end, cur.Length));
                     if (start >= end) { ReplyBool(ctx, false); break; }
-                    ReplyBool(ctx, _b.SetTextOnUi(_n, cur.Remove(start, end - start))); break;
+                    ReplyBool(ctx, _b._tree!.SetTextOnUi(_n, cur.Remove(start, end - start))); break;
                 }
                 case "CopyText": ctx.Reply(ctx.CreateReplyWriter(null).CreateMessage()); break;
                 case "CutText":
@@ -651,7 +417,7 @@ public sealed class AtspiBridge
                 string piface = reader.ReadString();
                 string prop = reader.ReadString();
                 if (piface == ValueIface && prop == "CurrentValue" && _n.HasRange)
-                    _b.SetRangeValueOnUi(_n, reader.ReadVariantValue().GetDouble());
+                    _b._tree!.SetRangeValueOnUi(_n, reader.ReadVariantValue().GetDouble());
                 ctx.Reply(ctx.CreateReplyWriter(null).CreateMessage());
             }
             else if (m == "GetAll")
