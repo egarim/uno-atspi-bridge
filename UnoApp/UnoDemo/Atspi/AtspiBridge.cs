@@ -196,6 +196,8 @@ public sealed class AtspiBridge
                         n.Children.Add(child);
                         _byPath[child.Path] = child;
                     }
+                    // like Avalonia, the combo also exposes its current selection as Text
+                    n.Text = n.Children.Find(c => c.Selected)?.Name ?? "";
                     descend = false;   // don't walk the visual subtree — the content
                                        // presenter shows a copy of the selected item
                 }
@@ -240,6 +242,7 @@ public sealed class AtspiBridge
                 {
                     foreach (var item in node.Children)
                         item.Selected = item.ItemIndex == cb.SelectedIndex;
+                    node.Text = node.Children.Find(c => c.Selected)?.Name ?? "";
                     EmitSelectionChanged(node);
                 };
             }
@@ -486,11 +489,13 @@ public sealed class AtspiBridge
         // DoAction to activate the control the way a screen reader would.
         bool Actionable => _n.Selectable ||
             _n.RoleName is "push button" or "check box" or "radio button" or "combo box";
+        // Names match Avalonia's native backend (the parity oracle): click / toggle /
+        // expand or collapse / select.
         string ActionName() => _n.Selectable ? "select" : _n.RoleName switch
         {
-            "push button" => "press",
+            "push button" => "click",
             "check box" => "toggle", "radio button" => "toggle",
-            "combo box" => "expand",
+            "combo box" => "expand or collapse",
             _ => "activate",
         };
 
@@ -633,7 +638,7 @@ public sealed class AtspiBridge
                     w.WriteVariantInt32(prop == "NSelectedChildren" ? (_n.Children.Exists(c => c.Selected) ? 1 : 0) : 0);
                     ctx.Reply(w.CreateMessage());
                 }
-                else if (piface == TextIface && _n.HasText)
+                else if (piface == TextIface && (_n.HasText || _n.Expandable))
                 {
                     var w = ctx.CreateReplyWriter("v");
                     w.WriteVariantInt32(prop == "CharacterCount" ? _n.Text.Length : 0);
@@ -719,7 +724,7 @@ public sealed class AtspiBridge
             if (Actionable) w.WriteString(ActionIface);
             if (_n.HasRange) w.WriteString(ValueIface);
             if (_n.HasText) { w.WriteString(TextIface); w.WriteString(EditIface); }
-            if (_n.Expandable) w.WriteString(SelIface);
+            if (_n.Expandable) { w.WriteString(SelIface); w.WriteString(TextIface); }
             if (_n.Parent is null) w.WriteString(AppIface);
             w.WriteArrayEnd(a);
             ctx.Reply(w.CreateMessage());
