@@ -107,16 +107,28 @@ def proof_combo(app):
     """Expand the Theme selector, enumerate its items, select 'Dark' — all over the bus."""
     cb = walk(app, "combo box", "theme")
     if not cb: print("agent > no combo box found"); return False
-    items = [cb.get_child_at_index(i) for i in range(cb.get_child_count())]
-    names = [(c.get_name() or "?") for c in items]
-    print(f"agent > [combo box] '{cb.get_name()}' items = {names}")
-    if not names: print("agent > ✗ no items on the bus"); return False
 
-    print("agent > invoke Action.do_action(0) → 'expand'")
+    print(f"agent > invoke Action.do_action(0) → {action_name(cb, 0)!r}")
     do_action(cb, 0)
     time.sleep(1.5)
     expanded = cb.get_state_set().contains(Atspi.StateType.EXPANDED)
     print(f"agent > EXPANDED state = {expanded}")
+
+    # enumerate app-wide after expanding — this bridge parents the items under
+    # the combo, but some toolkits realize them inside a separate top-level popup
+    # frame while open, so the generic flow is expand → search the app
+    def list_items(acc, depth=0):
+        found = []
+        for i in range(acc.get_child_count()):
+            c = acc.get_child_at_index(i)
+            if c is None: continue
+            if "list item" in (c.get_role_name() or ""): found.append(c)
+            elif depth < 12: found.extend(list_items(c, depth + 1))
+        return found
+    items = list_items(app)
+    names = [(c.get_name() or "?") for c in items]
+    print(f"agent > [combo box] '{cb.get_name()}' list items = {names}")
+    if not names: print("agent > ✗ no list items on the bus"); return False
 
     target = names.index("Dark") if "Dark" in names else 1
     print(f"agent > Selection.select_child({target})  → {names[target]!r}")
