@@ -1,0 +1,60 @@
+>> app pid 34; letting it render + embed ...
+>> listener armed (captures what the agent causes) ...
+>> AGENT RUN
+----------------------------------------------------------------
+
+agent > looking for app ~ 'unodemo'
+agent > app: 'UnoDemo'
+agent > read tree → find [check box] name~'notification'
+agent > matched [check box] 'Enable notifications' box=(200,187,157,32)
+agent > it advertises 1 action(s): 'toggle'   ← this is how I click
+agent > CHECKED before = False
+agent > invoke  Action.do_action(0)  … (no mouse, no coordinates)
+agent > do_action returned True
+agent > CHECKED after  = True
+agent > ✓ PROOF: the control flipped False → True — the agent clicked through the accessibility tree.
+----------------------------------------------------------------
+>> AGENT RUN step 5: Value (slider) + EditableText (entry)
+----------------------------------------------------------------
+
+agent > looking for app ~ 'unodemo'
+agent > app: 'UnoDemo'
+agent > [slider] 'Volume' range=[0.0,100.0] value=50.0
+agent > set_current_value(80.0) → read back 80.0
+agent > ✓ PROOF: slider moved through the Value interface.
+agent > [entry] 'Search box' text before = ''
+agent > set_text_contents(...) → read back 'hello from the bus'
+agent > ✓ PROOF: text written through EditableText, read back through Text.
+agent > [combo box] 'Theme selector' items = ['Light', 'Dark']
+agent > invoke Action.do_action(0) → 'expand'
+agent > EXPANDED state = True
+agent > Selection.select_child(1)  → 'Dark'
+agent > is_child_selected(1) = True, item SELECTED state = True
+agent > ✓ PROOF: combo expanded, items enumerated, selection made over the bus.
+----------------------------------------------------------------
+>> events the listener caught (this is what Orca would hear):
+   # listening for object:state-changed for 12s ...
+   [EVENT] object:state-changed:checked  value=1  source=[check box] 'Enable notifications'
+   
+   [EVENT] object:state-changed:expanded  value=1  source=[combo box] 'Theme selector'
+   [EVENT] object:state-changed:focused  value=1  source=[combo box] 'Theme selector'
+   [EVENT] object:state-changed:focused  value=0  source=[combo box] 'Theme selector'
+   [EVENT] object:state-changed:focused  value=1  source=[list item] 'Light'
+   [EVENT] object:state-changed:focused  value=0  source=[list item] 'Light'
+   [EVENT] object:state-changed:focused  value=1  source=[list item] 'Dark'
+>> bridge log (DoAction → real control):
+   [atspi] emit state-changed:checked=1 on Enable notifications
+   [atspi] DoAction 'Enable notifications': Toggle() → On (ok=True)
+   [atspi] emit property-change:accessible-value=80 on Volume
+   [atspi] SetCurrentValue 'Volume' = 80
+   [atspi] SetTextContents 'Search box' = "hello from the bus"
+   [atspi] emit property-change:accessible-value=hello from the bus on Search box
+   [atspi] emit state-changed:expanded=1 on Theme selector
+   [atspi] DoAction 'Theme selector': Expand() (ok=True)
+   [atspi] emit state-changed:focused=1 on Theme selector
+   [atspi] emit state-changed:focused=0 on Theme selector
+   [atspi] emit state-changed:focused=1 on Light
+   [atspi] emit selection-changed on Theme selector
+   [atspi] SelectChild 1 on 'Theme selector' → 'Dark'
+   [atspi] emit state-changed:focused=0 on Light
+   [atspi] emit state-changed:focused=1 on Dark

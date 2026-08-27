@@ -103,6 +103,32 @@ def proof_text(app):
     print(f"agent > {'✓ PROOF: text written through EditableText, read back through Text.' if ok else '✗ text did not change'}")
     return ok
 
+def proof_combo(app):
+    """Expand the Theme selector, enumerate its items, select 'Dark' — all over the bus."""
+    cb = walk(app, "combo box", "theme")
+    if not cb: print("agent > no combo box found"); return False
+    items = [cb.get_child_at_index(i) for i in range(cb.get_child_count())]
+    names = [(c.get_name() or "?") for c in items]
+    print(f"agent > [combo box] '{cb.get_name()}' items = {names}")
+    if not names: print("agent > ✗ no items on the bus"); return False
+
+    print("agent > invoke Action.do_action(0) → 'expand'")
+    do_action(cb, 0)
+    time.sleep(1.5)
+    expanded = cb.get_state_set().contains(Atspi.StateType.EXPANDED)
+    print(f"agent > EXPANDED state = {expanded}")
+
+    target = names.index("Dark") if "Dark" in names else 1
+    print(f"agent > Selection.select_child({target})  → {names[target]!r}")
+    Atspi.Selection.select_child(cb, target)
+    time.sleep(1.5)
+    sel_ok = Atspi.Selection.is_child_selected(cb, target)
+    item_sel = items[target].get_state_set().contains(Atspi.StateType.SELECTED)
+    print(f"agent > is_child_selected({target}) = {sel_ok}, item SELECTED state = {item_sel}")
+    ok = sel_ok and item_sel and expanded
+    print(f"agent > {'✓ PROOF: combo expanded, items enumerated, selection made over the bus.' if ok else '✗ combo flow incomplete'}")
+    return ok
+
 def main():
     Atspi.init()
     print(f"agent > looking for app ~ {APP!r}")
@@ -115,9 +141,10 @@ def main():
         print("agent > app not found on the AT-SPI desktop"); sys.exit(2)
     print(f"agent > app: {app.get_name()!r}")
 
-    if ROLE == "all":   # step 5: slider (Value) + entry (EditableText/Text)
+    if ROLE == "all":   # step 5+6: slider (Value) + entry (EditableText/Text) + combo (Selection)
         ok = proof_value(app)
         ok = proof_text(app) and ok
+        ok = proof_combo(app) and ok
         Atspi.exit(); sys.exit(0 if ok else 5)
 
     print(f"agent > read tree → find [{ROLE}] name~{NAME!r}")
