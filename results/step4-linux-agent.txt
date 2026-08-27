@@ -1,0 +1,29 @@
+>> AGENT RUN
+----------------------------------------------------------------
+
+(process:78): dbind-WARNING **: 07:15:15.404: AT-SPI: Error in GetItems, sender=:1.1, error=Method "GetItems" with signature "" on interface "org.a11y.atspi.Cache" doesn't exist
+/harness/atspi_agent.py:65: DeprecationWarning: Atspi.Action.get_action_name is deprecated
+  return acc.get_action_name(i)
+agent > looking for app ~ 'unodemo'
+agent > app: 'UnoDemo'
+agent > read tree → find [check box] name~'notification'
+agent > matched [check box] 'Enable notifications' box=(20,187,157,32)
+agent > it advertises 1 action(s): 'toggle'   ← this is how I click
+agent > CHECKED before = False
+agent > invoke  Action.do_action(0)  … (no mouse, no coordinates)
+agent > do_action returned True
+agent > CHECKED after  = True
+agent > ✓ PROOF: the control flipped False → True — the agent clicked through the accessibility tree.
+----------------------------------------------------------------
+>> events the listener caught (this is what Orca would hear):
+   # listening for object:state-changed for 12s ...
+   [EVENT] object:state-changed:checked  value=1  source=[check box] 'Enable notifications'
+   
+   (process:76): dbind-WARNING **: 07:15:15.423: AT-SPI: Error in GetItems, sender=:1.1, error=Method "GetItems" with signature "" on interface "org.a11y.atspi.Cache" doesn't exist
+>> bridge log (DoAction → real control):
+   [atspi] built 30 control nodes (+root); window origin (0, 0)
+   [atspi] a11y bus = unix:path=/root/.cache/at-spi/bus_99,guid=9828b0d45d683c275ff0f2f56a8d40f9
+   [atspi] connected, unique = :1.1
+   [atspi] embedded; tree is live, events wired
+   [atspi] emit state-changed:checked=1 on Enable notifications
+   [atspi] DoAction 'Enable notifications': Toggle() → On (ok=True)
