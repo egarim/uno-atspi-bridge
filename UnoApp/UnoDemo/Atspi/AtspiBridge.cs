@@ -22,6 +22,8 @@ internal sealed class Node
     public (int x, int y, int w, int h) Box;                 // screen coordinates
     public bool Enabled, Focusable;
     public bool Checked;                                     // live toggle state
+    public bool HasRange; public double Min, Max, Val;       // live slider state → Value iface
+    public bool HasText;  public string Text = "";           // live entry text → EditableText iface
     public Node? Parent;
     public readonly List<Node> Children = new();
     public Microsoft.UI.Xaml.FrameworkElement? Element;      // source, for live events
@@ -52,8 +54,11 @@ public sealed class AtspiBridge
     const string CompIface = "org.a11y.atspi.Component";
     const string AppIface = "org.a11y.atspi.Application";
     const string ActionIface = "org.a11y.atspi.Action";
+    const string ValueIface = "org.a11y.atspi.Value";
+    const string EditIface = "org.a11y.atspi.EditableText";
+    const string TextIface = "org.a11y.atspi.Text";
     const string PropIface = "org.freedesktop.DBus.Properties";
-    const int ST_CHECKED = 4, ST_ENABLED = 8, ST_FOCUSABLE = 11,
+    const int ST_CHECKED = 4, ST_EDITABLE = 7, ST_ENABLED = 8, ST_FOCUSABLE = 11,
               ST_SENSITIVE = 24, ST_SHOWING = 25, ST_VISIBLE = 30;
 
     DBusConnection? _conn;
@@ -160,6 +165,10 @@ public sealed class AtspiBridge
                 };
                 if (fe is Microsoft.UI.Xaml.Controls.Primitives.ToggleButton tb0)
                     n.Checked = tb0.IsChecked == true;
+                if (fe is Microsoft.UI.Xaml.Controls.Primitives.RangeBase rb0)
+                { n.HasRange = true; n.Min = rb0.Minimum; n.Max = rb0.Maximum; n.Val = rb0.Value; }
+                if (fe is Microsoft.UI.Xaml.Controls.TextBox tx0)
+                { n.HasText = true; n.Text = tx0.Text ?? ""; }
                 parent.Children.Add(n);
                 _byPath[n.Path] = n;
                 attach = n;
@@ -186,6 +195,12 @@ public sealed class AtspiBridge
                 tb.Checked   += (_, _) => { node.Checked = true;  EmitStateChanged(node, "checked", 1); };
                 tb.Unchecked += (_, _) => { node.Checked = false; EmitStateChanged(node, "checked", 0); };
             }
+            if (node.Element is Microsoft.UI.Xaml.Controls.Primitives.RangeBase rb)
+                rb.ValueChanged += (_, e) =>
+                { node.Val = e.NewValue; EmitPropertyChange(node, "accessible-value", e.NewValue); };
+            if (node.Element is Microsoft.UI.Xaml.Controls.TextBox tx)
+                tx.TextChanged += (_, _) =>
+                { node.Text = tx.Text ?? ""; EmitPropertyChange(node, "accessible-value", node.Text); };
         }
     }
 
@@ -204,6 +219,26 @@ public sealed class AtspiBridge
             w.WriteStructureStart(); w.WriteString(_unique); w.WriteObjectPath(RootPath);
             _conn.TrySendMessage(w.CreateMessage());
             Console.WriteLine($"[atspi] emit state-changed:{detail}={value} on {n.Name}");
+        }
+        catch (Exception ex) { Console.WriteLine($"[atspi] emit failed: {ex.Message}"); }
+    }
+
+    // org.a11y.atspi.Event.Object.PropertyChange  body: siiv(so) — the signal AT-SPI
+    // clients expect for value/text changes ("accessible-value").
+    void EmitPropertyChange(Node n, string prop, object value)
+    {
+        if (_conn is null) return;
+        try
+        {
+            var w = _conn.GetMessageWriter();
+            w.WriteSignalHeader(null, n.Path, "org.a11y.atspi.Event.Object", "PropertyChange", "siiv(so)");
+            w.WriteString(prop);
+            w.WriteInt32(0);
+            w.WriteInt32(0);
+            if (value is double d) w.WriteVariantDouble(d); else w.WriteVariantString(value.ToString() ?? "");
+            w.WriteStructureStart(); w.WriteString(_unique); w.WriteObjectPath(RootPath);
+            _conn.TrySendMessage(w.CreateMessage());
+            Console.WriteLine($"[atspi] emit property-change:{prop}={value} on {n.Name}");
         }
         catch (Exception ex) { Console.WriteLine($"[atspi] emit failed: {ex.Message}"); }
     }
@@ -245,6 +280,42 @@ public sealed class AtspiBridge
         });
     }
 
+    // Value.CurrentValue set → IRangeValueProvider.SetValue, clamped to [min, max].
+    internal bool SetRangeValueOnUi(Node n, double value)
+    {
+        var el = n.Element; var dq = el?.DispatcherQueue;
+        if (el is null || dq is null) return false;
+        return dq.TryEnqueue(() =>
+        {
+            var peer = FrameworkElementAutomationPeer.CreatePeerForElement(el);
+            if (peer?.GetPattern(PatternInterface.RangeValue)
+                is Microsoft.UI.Xaml.Automation.Provider.IRangeValueProvider rv)
+            {
+                var clamped = Math.Max(rv.Minimum, Math.Min(rv.Maximum, value));
+                rv.SetValue(clamped);
+                Console.WriteLine($"[atspi] SetCurrentValue '{n.Name}' = {clamped}");
+            }
+        });
+    }
+
+    // EditableText → IValueProvider.SetValue; Insert/Delete are string surgery on
+    // the live text.
+    internal bool SetTextOnUi(Node n, string text)
+    {
+        var el = n.Element; var dq = el?.DispatcherQueue;
+        if (el is null || dq is null) return false;
+        return dq.TryEnqueue(() =>
+        {
+            var peer = FrameworkElementAutomationPeer.CreatePeerForElement(el);
+            if (peer?.GetPattern(PatternInterface.Value)
+                is Microsoft.UI.Xaml.Automation.Provider.IValueProvider { IsReadOnly: false } vp)
+            {
+                vp.SetValue(text);
+                Console.WriteLine($"[atspi] SetTextContents '{n.Name}' = \"{text}\"");
+            }
+        });
+    }
+
     sealed class NodeHandler : IPathMethodHandler
     {
         readonly AtspiBridge _b; readonly Node _n;
@@ -259,6 +330,8 @@ public sealed class AtspiBridge
             if (iface == AccIface) Accessible(ctx, member);
             else if (iface == CompIface) Component(ctx, member);
             else if (iface == ActionIface) Action(ctx, member);
+            else if (iface == EditIface) EditableText(ctx, member);
+            else if (iface == TextIface) Text(ctx, member);
             else if (iface == AppIface) Application(ctx, member);
             else if (iface == PropIface) Properties(ctx, member);
             else if (iface == "org.freedesktop.DBus.Introspectable" && member == "Introspect")
@@ -361,6 +434,54 @@ public sealed class AtspiBridge
             }
         }
 
+        // org.a11y.atspi.Text — minimal read side so act-then-verify works for entries.
+        void Text(MethodContext ctx, string m)
+        {
+            if (m == "GetText")
+            {
+                var r = ctx.Request.GetBodyReader();
+                int start = r.ReadInt32(); int end = r.ReadInt32();
+                var t = _n.Text;
+                start = Math.Max(0, Math.Min(start, t.Length));
+                end = end < 0 ? t.Length : Math.Max(start, Math.Min(end, t.Length));
+                ReplyStr(ctx, "s", t.Substring(start, end - start));
+            }
+        }
+
+        // org.a11y.atspi.EditableText — set/insert/delete text through IValueProvider.
+        // Replies true once dispatched (same semantics as DoAction); the PropertyChange
+        // event from TextChanged is the confirmation.
+        void EditableText(MethodContext ctx, string m)
+        {
+            if (!_n.HasText) { ReplyBool(ctx, false); return; }
+            var r = ctx.Request.GetBodyReader();
+            switch (m)
+            {
+                case "SetTextContents":
+                    ReplyBool(ctx, _b.SetTextOnUi(_n, r.ReadString())); break;
+                case "InsertText":
+                {
+                    int pos = r.ReadInt32(); string s = r.ReadString(); int len = r.ReadInt32();
+                    var cur = _n.Text;
+                    pos = Math.Max(0, Math.Min(pos, cur.Length));
+                    var ins = len >= 0 && len < s.Length ? s.Substring(0, len) : s;
+                    ReplyBool(ctx, _b.SetTextOnUi(_n, cur.Insert(pos, ins))); break;
+                }
+                case "DeleteText":
+                {
+                    int start = r.ReadInt32(); int end = r.ReadInt32();
+                    var cur = _n.Text;
+                    start = Math.Max(0, Math.Min(start, cur.Length));
+                    end = Math.Max(start, Math.Min(end, cur.Length));
+                    if (start >= end) { ReplyBool(ctx, false); break; }
+                    ReplyBool(ctx, _b.SetTextOnUi(_n, cur.Remove(start, end - start))); break;
+                }
+                case "CopyText": ctx.Reply(ctx.CreateReplyWriter(null).CreateMessage()); break;
+                case "CutText":
+                case "PasteText": ReplyBool(ctx, false); break;   // no clipboard via IValueProvider
+            }
+        }
+
         void Application(MethodContext ctx, string m)
         {
             if (m == "GetLocale") ReplyStr(ctx, "s", "C");
@@ -371,9 +492,36 @@ public sealed class AtspiBridge
             if (m == "Get")
             {
                 var reader = ctx.Request.GetBodyReader();
-                reader.ReadString();                 // interface name (ignored)
+                string piface = reader.ReadString();
                 string prop = reader.ReadString();
-                ReplyVariant(ctx, prop);
+                if (piface == ValueIface && _n.HasRange)
+                {
+                    var w = ctx.CreateReplyWriter("v");
+                    w.WriteVariantDouble(prop switch
+                    {
+                        "CurrentValue" => _n.Val,
+                        "MinimumValue" => _n.Min,
+                        "MaximumValue" => _n.Max,
+                        _ => 0,                      // MinimumIncrement: RangeBase has no step
+                    });
+                    ctx.Reply(w.CreateMessage());
+                }
+                else if (piface == TextIface && _n.HasText)
+                {
+                    var w = ctx.CreateReplyWriter("v");
+                    w.WriteVariantInt32(prop == "CharacterCount" ? _n.Text.Length : 0);
+                    ctx.Reply(w.CreateMessage());
+                }
+                else ReplyVariant(ctx, prop);
+            }
+            else if (m == "Set")
+            {
+                var reader = ctx.Request.GetBodyReader();
+                string piface = reader.ReadString();
+                string prop = reader.ReadString();
+                if (piface == ValueIface && prop == "CurrentValue" && _n.HasRange)
+                    _b.SetRangeValueOnUi(_n, reader.ReadVariantValue().GetDouble());
+                ctx.Reply(ctx.CreateReplyWriter(null).CreateMessage());
             }
             else if (m == "GetAll")
             {
@@ -426,6 +574,7 @@ public sealed class AtspiBridge
             set(ST_SHOWING); set(ST_VISIBLE);
             if (_n.Focusable) set(ST_FOCUSABLE);
             if (_n.Checked) set(ST_CHECKED);
+            if (_n.HasText) set(ST_EDITABLE);
             var w = ctx.CreateReplyWriter("au");
             var a = w.WriteArrayStart(DBusType.UInt32);
             w.WriteUInt32(w0); w.WriteUInt32(0);
@@ -439,6 +588,8 @@ public sealed class AtspiBridge
             var a = w.WriteArrayStart(DBusType.String);
             w.WriteString(AccIface); w.WriteString(CompIface);
             if (Actionable) w.WriteString(ActionIface);
+            if (_n.HasRange) w.WriteString(ValueIface);
+            if (_n.HasText) { w.WriteString(TextIface); w.WriteString(EditIface); }
             if (_n.Parent is null) w.WriteString(AppIface);
             w.WriteArrayEnd(a);
             ctx.Reply(w.CreateMessage());
