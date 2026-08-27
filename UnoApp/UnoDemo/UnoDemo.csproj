@@ -30,4 +30,8 @@
     <PackageReference Include="Tmds.DBus.Protocol" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="UnoDemo.Tests" />
+  </ItemGroup>
+
 </Project>

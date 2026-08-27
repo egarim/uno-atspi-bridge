@@ -15,11 +15,34 @@ Full write-up: [I Gave Uno Platform a Linux Accessibility Backend in an Afternoo
 
 *The demo app whose controls the bridge exposes.*
 
-> **Windows needs none of this.** The same app built with its native Windows head
-> (WinAppSDK) exposes full UI Automation out of the box — an agent drives every control
-> natively, no bridge. Validated with Telekinesis on real hardware:
-> [results/windows-uia-native.md](results/windows-uia-native.md). The bridge (and the
-> SkiaSharp/FreeType fix) are Linux-only concerns.
+> **Windows needs none of this — on the WinAppSDK head.** The same app built with
+> its native Windows head (WinAppSDK) exposes full UI Automation out of the box — an
+> agent drives every control natively, no bridge. Validated with Telekinesis on real
+> hardware: [results/windows-uia-native.md](results/windows-uia-native.md). But note:
+> Uno 6.x's default template ships the single **Skia desktop** head, and a *Windows*
+> app on that head has the same canvas gap this repo bridges on Linux — "Windows is
+> fine" only holds when you build the WinAppSDK head.
+
+## The gap is a canvas problem, not an Uno problem
+
+Any toolkit that paints its own pixels (Skia, canvas) publishes no control-level
+accessibility unless someone bridges its peer tree to the platform API. First-hand
+data across two toolkits:
+
+| Toolkit / head | Windows | Linux | macOS |
+|---|---|---|---|
+| **Uno — Skia desktop (default)** | gap → needs a bridge | gap → **this bridge** | gap (untested, see [#5](https://github.com/egarim/uno-atspi-bridge/issues/5)) |
+| **Uno — WinAppSDK head** | native UIA ✅ | n/a | n/a |
+| **Avalonia (stock template)** | native UIA ✅ | native AT-SPI ✅ (12.0+, `Avalonia.FreeDesktop.AtSpi`; 11.x has the gap) | native AXAPI ✅ |
+
+Avalonia is the proof the bridge approach scales to production: its
+`Avalonia.FreeDesktop.AtSpi` backend is the reference implementation this bridge's
+write-path interfaces (Action, Value, EditableText, Selection) are ported from.
+
+The AT-SPI-first *consumer* of all this is
+[**Telekinesis**](https://github.com/egarim/telekinesis) — an MCP server that lets
+agents see and drive desktops through the platform a11y APIs (UIA / AT-SPI / AXAPI),
+now on NuGet: `dotnet tool install -g Telekinesis`.
 
 ## What works
 
@@ -28,7 +51,11 @@ Full write-up: [I Gave Uno Platform a Linux Accessibility Backend in an Afternoo
 | App registers on the AT-SPI desktop (`Socket.Embed`) | ✅ |
 | Per-control `Accessible` (role, name, states, children) | ✅ |
 | `Component` (bounding box, position, size) | ✅ |
-| **Live events** — `state-changed:focused`, `state-changed:checked` | ✅ |
+| **Live events** — `state-changed:focused/checked/expanded`, `PropertyChange`, `SelectionChanged` | ✅ |
+| **`Action`** — press / toggle / expand / select through the bus | ✅ |
+| **`Value`** — slider read + clamped write (`CurrentValue`) | ✅ |
+| **`EditableText` + `Text`** — type into entries, read text back | ✅ |
+| **`Selection`** — combo items enumerable + selectable | ✅ |
 | Screen-space coordinates (window origin applied) | ✅ (see note) |
 
 ## Quick start (Docker — no Linux desktop needed)
