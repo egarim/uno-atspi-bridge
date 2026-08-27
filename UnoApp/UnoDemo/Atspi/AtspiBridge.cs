@@ -21,6 +21,7 @@ internal sealed class Node
     public string RoleName = "";
     public (int x, int y, int w, int h) Box;                 // screen coordinates
     public bool Enabled, Focusable;
+    public bool Checked;                                     // live toggle state
     public Node? Parent;
     public readonly List<Node> Children = new();
     public Microsoft.UI.Xaml.FrameworkElement? Element;      // source, for live events
@@ -50,8 +51,10 @@ public sealed class AtspiBridge
     const string AccIface = "org.a11y.atspi.Accessible";
     const string CompIface = "org.a11y.atspi.Component";
     const string AppIface = "org.a11y.atspi.Application";
+    const string ActionIface = "org.a11y.atspi.Action";
     const string PropIface = "org.freedesktop.DBus.Properties";
-    const int ST_ENABLED = 8, ST_FOCUSABLE = 11, ST_SENSITIVE = 24, ST_SHOWING = 25, ST_VISIBLE = 30;
+    const int ST_CHECKED = 4, ST_ENABLED = 8, ST_FOCUSABLE = 11,
+              ST_SENSITIVE = 24, ST_SHOWING = 25, ST_VISIBLE = 30;
 
     DBusConnection? _conn;
     string _unique = "";
@@ -155,6 +158,8 @@ public sealed class AtspiBridge
                     Parent = parent,
                     Element = fe,
                 };
+                if (fe is Microsoft.UI.Xaml.Controls.Primitives.ToggleButton tb0)
+                    n.Checked = tb0.IsChecked == true;
                 parent.Children.Add(n);
                 _byPath[n.Path] = n;
                 attach = n;
@@ -178,8 +183,8 @@ public sealed class AtspiBridge
             node.Element.LostFocus += (_, _) => EmitStateChanged(node, "focused", 0);
             if (node.Element is Microsoft.UI.Xaml.Controls.Primitives.ToggleButton tb)
             {
-                tb.Checked   += (_, _) => EmitStateChanged(node, "checked", 1);
-                tb.Unchecked += (_, _) => EmitStateChanged(node, "checked", 0);
+                tb.Checked   += (_, _) => { node.Checked = true;  EmitStateChanged(node, "checked", 1); };
+                tb.Unchecked += (_, _) => { node.Checked = false; EmitStateChanged(node, "checked", 0); };
             }
         }
     }
@@ -207,6 +212,9 @@ public sealed class AtspiBridge
     // observes real, live events without a human touching anything.
     async Task EventDemoAsync()
     {
+        // Skip the canned focus/toggle when an external agent is driving, so the only
+        // events on the bus are the ones the agent's DoAction actually caused.
+        if (Environment.GetEnvironmentVariable("UNODEMO_NO_AUTODEMO") == "1") return;
         await Task.Delay(3000);
         var entry = FindByRole("entry");
         entry?.Element?.Focus(Microsoft.UI.Xaml.FocusState.Programmatic);
@@ -219,6 +227,22 @@ public sealed class AtspiBridge
     {
         foreach (var n in _byPath.Values) if (n.RoleName == roleName) return n;
         return null;
+    }
+
+    // ---- the write-path: an incoming AT-SPI Action.DoAction drives the real control ----
+    // AT-SPI calls arrive on the D-Bus thread; UI mutation must hop to Uno's dispatcher.
+    // We reply true once the action is *dispatched* (AT-SPI semantics); the actual proof
+    // is the state-changed event HookLiveEvents emits when the control really changes.
+    internal bool InvokeOnUi(Node n)
+    {
+        var el = n.Element;
+        var dq = el?.DispatcherQueue;
+        if (el is null || dq is null) return false;
+        return dq.TryEnqueue(() =>
+        {
+            var (ok, detail) = UnoDemo.Agent.Act(el);   // GetPattern(Invoke/Toggle) — same helper as the in-app agent
+            Console.WriteLine($"[atspi] DoAction '{n.Name}': {detail} (ok={ok})");
+        });
     }
 
     sealed class NodeHandler : IPathMethodHandler
@@ -234,6 +258,7 @@ public sealed class AtspiBridge
             string member = ctx.Request.MemberAsString ?? "";
             if (iface == AccIface) Accessible(ctx, member);
             else if (iface == CompIface) Component(ctx, member);
+            else if (iface == ActionIface) Action(ctx, member);
             else if (iface == AppIface) Application(ctx, member);
             else if (iface == PropIface) Properties(ctx, member);
             else if (iface == "org.freedesktop.DBus.Introspectable" && member == "Introspect")
@@ -294,6 +319,48 @@ public sealed class AtspiBridge
             }
         }
 
+        // org.a11y.atspi.Action — the write-path. A client (Orca / our agent) calls
+        // DoAction to activate the control the way a screen reader would.
+        bool Actionable => _n.RoleName is "push button" or "check box" or "radio button" or "combo box";
+        static string ActionName(string role) => role switch
+        {
+            "push button" => "press",
+            "check box" => "toggle", "radio button" => "toggle",
+            "combo box" => "expand",
+            _ => "activate",
+        };
+
+        void Action(MethodContext ctx, string m)
+        {
+            switch (m)
+            {
+                case "GetNActions": ReplyI(ctx, Actionable ? 1 : 0); break;
+                case "GetName":
+                case "GetLocalizedName":
+                    ctx.Request.GetBodyReader().ReadInt32();          // action index (only 0)
+                    ReplyStr(ctx, "s", ActionName(_n.RoleName)); break;
+                case "GetDescription":
+                    ctx.Request.GetBodyReader().ReadInt32(); ReplyStr(ctx, "s", ""); break;
+                case "GetKeyBinding":
+                    ctx.Request.GetBodyReader().ReadInt32(); ReplyStr(ctx, "s", ""); break;
+                case "GetActions":
+                {
+                    var w = ctx.CreateReplyWriter("a(sss)");
+                    var a = w.WriteArrayStart(DBusType.Struct);
+                    if (Actionable)
+                    { w.WriteStructureStart(); w.WriteString(ActionName(_n.RoleName)); w.WriteString(""); w.WriteString(""); }
+                    w.WriteArrayEnd(a);
+                    ctx.Reply(w.CreateMessage()); break;
+                }
+                case "DoAction":
+                {
+                    ctx.Request.GetBodyReader().ReadInt32();          // action index
+                    bool ok = _b.InvokeOnUi(_n);
+                    ReplyBool(ctx, ok); break;
+                }
+            }
+        }
+
         void Application(MethodContext ctx, string m)
         {
             if (m == "GetLocale") ReplyStr(ctx, "s", "C");
@@ -327,6 +394,7 @@ public sealed class AtspiBridge
                 case "Locale": w.WriteVariantString("C"); break;
                 case "AccessibleId": w.WriteVariantString(""); break;
                 case "ChildCount": w.WriteVariantInt32(_n.Children.Count); break;
+                case "NActions": w.WriteVariantInt32(Actionable ? 1 : 0); break;
                 case "ToolkitName": w.WriteVariantString("Uno"); break;
                 case "Version": w.WriteVariantString("1.0"); break;
                 case "AtspiVersion": w.WriteVariantString("2.1"); break;
@@ -357,6 +425,7 @@ public sealed class AtspiBridge
             if (_n.Enabled) { set(ST_ENABLED); set(ST_SENSITIVE); }
             set(ST_SHOWING); set(ST_VISIBLE);
             if (_n.Focusable) set(ST_FOCUSABLE);
+            if (_n.Checked) set(ST_CHECKED);
             var w = ctx.CreateReplyWriter("au");
             var a = w.WriteArrayStart(DBusType.UInt32);
             w.WriteUInt32(w0); w.WriteUInt32(0);
@@ -369,6 +438,7 @@ public sealed class AtspiBridge
             var w = ctx.CreateReplyWriter("as");
             var a = w.WriteArrayStart(DBusType.String);
             w.WriteString(AccIface); w.WriteString(CompIface);
+            if (Actionable) w.WriteString(ActionIface);
             if (_n.Parent is null) w.WriteString(AppIface);
             w.WriteArrayEnd(a);
             ctx.Reply(w.CreateMessage());
