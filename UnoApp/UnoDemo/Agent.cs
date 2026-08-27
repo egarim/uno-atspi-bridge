@@ -12,6 +12,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Automation.Provider;
 using Microsoft.UI.Xaml.Media;
@@ -81,8 +82,20 @@ public static class Agent
             tog.Toggle();
             return (true, $"Toggle() → {tog.ToggleState}");
         }
+        if (peer.GetPattern(PatternInterface.ExpandCollapse) is IExpandCollapseProvider ec)
+        {   // ComboBox: a pointer click never opens an Uno dropdown — only this pattern does
+            if (ec.ExpandCollapseState == ExpandCollapseState.Expanded)
+            { ec.Collapse(); return (true, "Collapse()"); }
+            ec.Expand();
+            return (true, "Expand()");
+        }
+        if (peer.GetPattern(PatternInterface.SelectionItem) is ISelectionItemProvider sel)
+        {   // RadioButton / list item: peer exposes SelectionItem, not Toggle
+            sel.Select();
+            return (true, "Select()");
+        }
         // no semantic action exposed — the caller may fall back to a box-center click
-        return (false, "no Invoke/Toggle pattern");
+        return (false, "no Invoke/Toggle/ExpandCollapse/SelectionItem pattern");
     }
 
     // ---- the chat brain (deterministic; swap for an LLM later) ----

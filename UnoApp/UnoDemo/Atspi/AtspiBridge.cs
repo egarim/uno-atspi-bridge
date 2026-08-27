@@ -21,7 +21,7 @@ internal sealed class Node
     public string RoleName = "";
     public (int x, int y, int w, int h) Box;                 // screen coordinates
     public bool Enabled, Focusable;
-    public bool Checkable, Checked;                          // live toggle state
+    public bool Checked;                                     // live toggle state
     public Node? Parent;
     public readonly List<Node> Children = new();
     public Microsoft.UI.Xaml.FrameworkElement? Element;      // source, for live events
@@ -53,7 +53,7 @@ public sealed class AtspiBridge
     const string AppIface = "org.a11y.atspi.Application";
     const string ActionIface = "org.a11y.atspi.Action";
     const string PropIface = "org.freedesktop.DBus.Properties";
-    const int ST_CHECKED = 4, ST_ENABLED = 8, ST_FOCUSABLE = 11, ST_CHECKABLE = 45,
+    const int ST_CHECKED = 4, ST_ENABLED = 8, ST_FOCUSABLE = 11,
               ST_SENSITIVE = 24, ST_SHOWING = 25, ST_VISIBLE = 30;
 
     DBusConnection? _conn;
@@ -159,7 +159,7 @@ public sealed class AtspiBridge
                     Element = fe,
                 };
                 if (fe is Microsoft.UI.Xaml.Controls.Primitives.ToggleButton tb0)
-                { n.Checkable = true; n.Checked = tb0.IsChecked == true; }
+                    n.Checked = tb0.IsChecked == true;
                 parent.Children.Add(n);
                 _byPath[n.Path] = n;
                 attach = n;
@@ -425,7 +425,7 @@ public sealed class AtspiBridge
             if (_n.Enabled) { set(ST_ENABLED); set(ST_SENSITIVE); }
             set(ST_SHOWING); set(ST_VISIBLE);
             if (_n.Focusable) set(ST_FOCUSABLE);
-            if (_n.Checked) set(ST_CHECKED);   // bit 4 → low word; CHECKABLE (45) needs the high word, skipped
+            if (_n.Checked) set(ST_CHECKED);
             var w = ctx.CreateReplyWriter("au");
             var a = w.WriteArrayStart(DBusType.UInt32);
             w.WriteUInt32(w0); w.WriteUInt32(0);
