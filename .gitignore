@@ -5,3 +5,5 @@ bin/
 
 # demo reel projects (large mp4 + node)
 reels/
+AvaloniaDemo/bin/
+AvaloniaDemo/obj/

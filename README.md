@@ -53,6 +53,7 @@ now on NuGet: `dotnet tool install -g Telekinesis`.
 | **`EditableText` + `Text`** — type into entries, read text back | ✅ |
 | **`Selection`** — combo items enumerable + selectable | ✅ |
 | Screen-space coordinates (window origin applied) | ✅ (see note) |
+| Cross-toolkit parity — same client, same proofs vs. a native AT-SPI backend | ✅ [results/parity-report.md](results/parity-report.md) |
 
 ## Quick start (Docker — no Linux desktop needed)
 

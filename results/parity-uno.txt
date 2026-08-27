@@ -1,0 +1,38 @@
+== PARITY DUMP (unodemo) ==
+
+Open File Manager      | role=push button | ifaces=Action | actions=click | states=ENABLED,FOCUSABLE,SENSITIVE,SHOWING,VISIBLE
+Save Document          | role=push button | ifaces=Action | actions=click | states=ENABLED,FOCUSABLE,SENSITIVE,SHOWING,VISIBLE
+Search box             | role=entry | ifaces=EditableText,Text | actions= | states=EDITABLE,ENABLED,FOCUSABLE,SENSITIVE,SHOWING,VISIBLE
+Enable notifications   | role=check box | ifaces=Action | actions=toggle | states=ENABLED,FOCUSABLE,SENSITIVE,SHOWING,VISIBLE
+Volume                 | role=slider | ifaces=Value | actions= | states=ENABLED,FOCUSABLE,SENSITIVE,SHOWING,VISIBLE
+Theme selector         | role=combo box | ifaces=Action,Selection,Text | actions=expand or collapse | states=ENABLED,EXPANDABLE,FOCUSABLE,SENSITIVE,SHOWING,VISIBLE
+Light                  | role=list item | ifaces=Action | actions=select | states=ENABLED,SELECTABLE,SELECTED,SENSITIVE,SHOWING,VISIBLE
+Dark                   | role=list item | ifaces=Action | actions=select | states=ENABLED,SELECTABLE,SENSITIVE,SHOWING,VISIBLE
+
+== AGENT PROOFS (toggle / value / text / combo) ==
+
+agent > looking for app ~ 'unodemo'
+agent > app: 'UnoDemo'
+agent > read tree → find [check box] name~'notification'
+agent > matched [check box] 'Enable notifications' box=(200,187,157,32)
+agent > it advertises 1 action(s): 'toggle'   ← this is how I click
+agent > CHECKED before = False
+agent > invoke  Action.do_action(0)  … (no mouse, no coordinates)
+agent > do_action returned True
+agent > CHECKED after  = True
+agent > ✓ PROOF: the control flipped False → True — the agent clicked through the accessibility tree.
+
+agent > looking for app ~ 'unodemo'
+agent > app: 'UnoDemo'
+agent > [slider] 'Volume' range=[0.0,100.0] value=50.0
+agent > set_current_value(80.0) → read back 80.0
+agent > ✓ PROOF: slider moved through the Value interface.
+agent > [entry] 'Search box' text before = ''
+agent > set_text_contents(...) → read back 'hello from the bus'
+agent > ✓ PROOF: text written through EditableText, read back through Text.
+agent > invoke Action.do_action(0) → 'expand or collapse'
+agent > EXPANDED state = True
+agent > [combo box] 'Theme selector' list items = ['Light', 'Dark']
+agent > Selection.select_child(1)  → 'Dark'
+agent > is_child_selected(1) = True, item SELECTED state = True
+agent > ✓ PROOF: combo expanded, items enumerated, selection made over the bus.

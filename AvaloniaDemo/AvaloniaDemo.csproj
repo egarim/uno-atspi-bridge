@@ -1,0 +1,17 @@
+<!-- The parity oracle: the same six controls as UnoDemo, but on Avalonia 12,
+     which ships a native AT-SPI backend on Linux. The harness drives both apps
+     with the identical AT-SPI client and diffs what the bus sees. -->
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="12.1.1" />
+    <PackageReference Include="Avalonia.Desktop" Version="12.1.1" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.1" />
+    <PackageReference Include="Avalonia.FreeDesktop.AtSpi" Version="12.1.1" />
+  </ItemGroup>
+</Project>
